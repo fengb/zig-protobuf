@@ -106,8 +106,40 @@ test "FieldInfo" {
     testing.expectEqual(u61(1), field.number);
 }
 
-pub fn marshal(comptime T: type, item: T) []u8 {
-    return [_]u8{};
+pub fn StreamingMarshal(comptime T: type) type {
+    return struct {
+        const Self = @This();
+        const fields = @typeInfo(T).Struct.fields;
+
+        item: T,
+        buffer: [1000]u8 = undefined,
+
+        pub fn init(item: T) Self {
+            return Self{
+                .item = item,
+            };
+        }
+
+        pub fn next(self: Self) ?[]u8 {
+            inline for (@typeInfo(T).Struct.fields) |field, i| {
+                std.debug.warn("{} {}\n", i, field.name);
+            }
+            return null;
+        }
+    };
+}
+
+pub fn marshal(comptime T: type, allocator: *std.mem.Allocator, item: T) ![]u8 {
+    var buffer = std.ArrayList(u8).init(allocator);
+    errdefer buffer.deinit();
+
+    const stream = StreamingMarshal(T).init(item);
+    while (stream.next()) |data| {
+        std.debug.warn("{x}\n", data);
+        try buffer.appendSlice(data);
+    }
+
+    return buffer.toOwnedSlice();
 }
 
 pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) T {
@@ -128,7 +160,7 @@ test "marshalling" {
         .@"type" = 17,
         .reps = [_]i64{ 1, 2, 3 },
     };
-    const binary = marshal(Example, start);
+    const binary = try marshal(Example, std.heap.direct_allocator, start);
     const result = unmarshal(Example, std.heap.direct_allocator, binary);
 
     //testing.expectEqualSlices(u8, start.label, result.label);
