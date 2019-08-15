@@ -111,18 +111,34 @@ pub fn StreamingMarshal(comptime T: type) type {
         const Self = @This();
         const fields = @typeInfo(T).Struct.fields;
 
+        // TODO: this is so terrible.
+        var done = false;
+
         item: T,
+        frame: @Frame(spin),
         buffer: [1000]u8 = undefined,
 
         pub fn init(item: T) Self {
-            return Self{
+            var result = Self{
                 .item = item,
+                .frame = undefined,
             };
+            result.frame = async spin();
+            return result;
         }
 
-        pub fn next(self: Self) ?[]u8 {
+        fn spin() void {
             inline for (@typeInfo(T).Struct.fields) |field, i| {
+                suspend;
                 std.debug.warn("{} {}\n", i, field.name);
+            }
+            Self.done = true;
+        }
+
+        pub fn next(self: *Self) ?[]u8 {
+            while (!Self.done) {
+                resume self.frame;
+                return [_]u8{};
             }
             return null;
         }
@@ -133,9 +149,10 @@ pub fn marshal(comptime T: type, allocator: *std.mem.Allocator, item: T) ![]u8 {
     var buffer = std.ArrayList(u8).init(allocator);
     errdefer buffer.deinit();
 
-    const stream = StreamingMarshal(T).init(item);
+    var stream = StreamingMarshal(T).init(item);
+
     while (stream.next()) |data| {
-        std.debug.warn("{x}\n", data);
+        std.debug.warn("data: {x}\n", data);
         try buffer.appendSlice(data);
     }
 
