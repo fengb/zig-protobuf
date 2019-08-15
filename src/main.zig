@@ -21,8 +21,13 @@ const Varint64 = struct {
     }
 
     pub fn encodeInto(self: Varint64, buffer: []u8) []u8 {
-        var i = usize(0);
         var value = self.uint;
+        if (value == 0) {
+            buffer[0] = 0;
+            return buffer[0..1];
+        }
+
+        var i = usize(0);
         while (value > 0) : (i += 1) {
             buffer[i] = u8(0x80) + @truncate(u7, value);
             value >>= 7;
@@ -92,7 +97,6 @@ test "Varint64" {
     var buf: [1000]u8 = undefined;
     vint = Varint64.initSint(-2147483648);
     var result = vint.encodeInto(buf[0..]);
-    std.debug.warn("{x}\n", result);
     const new = try Varint64.decode(result);
     testing.expectEqual(vint.uint, new.uint);
 }
@@ -132,36 +136,39 @@ test "FieldInfo" {
 pub fn StreamingMarshal(comptime T: type) type {
     return struct {
         const Self = @This();
-        const fields = @typeInfo(T).Struct.fields;
 
         // TODO: this is so terrible.
-        var done = false;
-        var out = [_]u8{};
+        // Temporarily sticking this here because I can't make spin a method due to circular references
+        var out: ?[]u8 = [_]u8{};
 
         item: T,
         frame: @Frame(spin),
-        buffer: [1000]u8 = undefined,
 
         pub fn init(item: T) Self {
-            var result = Self{
+            return Self{
                 .item = item,
-                .buffer = [_]u8{0} ** 1000,
-                .frame = undefined,
+                .frame = async spin(),
             };
-            result.frame = async spin(result.buffer[0..]);
-            return result;
         }
 
-        fn spin(buffer: []u8) void {
+        fn spin() void {
+            var buffer: [1000]u8 = undefined;
+
             inline for (@typeInfo(T).Struct.fields) |field, i| {
                 suspend;
-                std.debug.warn("{} {}\n", i, field.name);
+                const fieldInfo = FieldInfo{
+                    .typ = .Varint,
+                    .number = @intCast(u64, i),
+                };
+                // Work around copy elision bug
+                const copy = fieldInfo.encodeInto(buffer[0..]);
+                Self.out = copy;
             }
-            Self.done = true;
+            Self.out = null;
         }
 
         pub fn next(self: *Self) ?[]u8 {
-            while (!Self.done) {
+            if (out != null) {
                 resume self.frame;
                 return out;
             }
@@ -177,7 +184,7 @@ pub fn marshal(comptime T: type, allocator: *std.mem.Allocator, item: T) ![]u8 {
     var stream = StreamingMarshal(T).init(item);
 
     while (stream.next()) |data| {
-        std.debug.warn("data: {x}\n", data);
+        std.debug.warn("data: 0x{x}\n", data);
         try buffer.appendSlice(data);
     }
 
