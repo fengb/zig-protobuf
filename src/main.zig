@@ -20,6 +20,17 @@ const Varint64 = struct {
         return initUint(@intCast(u64, (n << 1) ^ (n >> 63)));
     }
 
+    pub fn encodeInto(self: Varint64, buffer: []u8) []u8 {
+        var i = usize(0);
+        var value = self.uint;
+        while (value > 0) : (i += 1) {
+            buffer[i] = u8(0x80) + @truncate(u7, value);
+            value >>= 7;
+        }
+        buffer[i - 1] = buffer[i - 1] & 0x7F;
+        return buffer[0..i];
+    }
+
     pub fn decode(bytes: []const u8) !Varint64 {
         var result = Varint64{
             .uint = 0,
@@ -30,7 +41,7 @@ const Varint64 = struct {
             if (i >= 10) {
                 return error.Whoops;
             }
-            result.uint += @intCast(u64, 0x7F & byte) << (7 * @intCast(u3, i));
+            result.uint += @intCast(u64, 0x7F & byte) << (7 * @intCast(u6, i));
             if (byte & 0x80 == 0) {
                 result.len = @intCast(u3, i + 1);
                 return result;
@@ -77,6 +88,13 @@ test "Varint64" {
     vint = Varint64.initSint(-2147483648);
     testing.expectEqual(u64(4294967295), vint.uint);
     testing.expectEqual(i64(-2147483648), vint.sint());
+
+    var buf: [1000]u8 = undefined;
+    vint = Varint64.initSint(-2147483648);
+    var result = vint.encodeInto(buf[0..]);
+    std.debug.warn("{x}\n", result);
+    const new = try Varint64.decode(result);
+    testing.expectEqual(vint.uint, new.uint);
 }
 
 const FieldInfo = struct {
@@ -98,6 +116,11 @@ const FieldInfo = struct {
         EndGroup = 4,
         _32bit = 5,
     };
+
+    pub fn encodeInto(self: FieldInfo, buffer: []u8) []u8 {
+        const val = (@intCast(u64, self.number) << 3) + @enumToInt(self.typ);
+        return Varint64.initUint(val).encodeInto(buffer);
+    }
 };
 
 test "FieldInfo" {
@@ -113,6 +136,7 @@ pub fn StreamingMarshal(comptime T: type) type {
 
         // TODO: this is so terrible.
         var done = false;
+        var out = [_]u8{};
 
         item: T,
         frame: @Frame(spin),
@@ -121,13 +145,14 @@ pub fn StreamingMarshal(comptime T: type) type {
         pub fn init(item: T) Self {
             var result = Self{
                 .item = item,
+                .buffer = [_]u8{0} ** 1000,
                 .frame = undefined,
             };
-            result.frame = async spin();
+            result.frame = async spin(result.buffer[0..]);
             return result;
         }
 
-        fn spin() void {
+        fn spin(buffer: []u8) void {
             inline for (@typeInfo(T).Struct.fields) |field, i| {
                 suspend;
                 std.debug.warn("{} {}\n", i, field.name);
@@ -138,7 +163,7 @@ pub fn StreamingMarshal(comptime T: type) type {
         pub fn next(self: *Self) ?[]u8 {
             while (!Self.done) {
                 resume self.frame;
-                return [_]u8{};
+                return out;
             }
             return null;
         }
