@@ -88,19 +88,29 @@ test "*int64" {
     uint = try Uint64.decode([_]u8{ 0b10010110, 0b00000001 }, &len);
     testing.expectEqual(u64(150), uint.data);
 
-    //    vint = Varint64.initInt(-1);
-    //    testing.expectEqual(u64(std.math.maxInt(u64)), vint.uint);
-    //    testing.expectEqual(i64(-1), vint.int());
-    //
-    //    vint = Varint64.initSint(-1);
-    //    testing.expectEqual(u64(1), vint.uint);
-    //    testing.expectEqual(i64(-1), vint.sint());
-    //
-    //    vint = Varint64.initSint(2147483647);
-    //    testing.expectEqual(u64(4294967294), vint.uint);
-    //    testing.expectEqual(i64(2147483647), vint.sint());
-    //
-    //    vint = Varint64.initSint(-2147483648);
-    //    testing.expectEqual(u64(4294967295), vint.uint);
-    //    testing.expectEqual(i64(-2147483648), vint.sint());
+    var buf1: [1000]u8 = undefined;
+    var buf2: [1000]u8 = undefined;
+    testing.expectEqualSlices(
+        u8,
+        (Int64{ .data = -1 }).encodeInto(buf1[0..]),
+        (Uint64{ .data = std.math.maxInt(u64) }).encodeInto(buf2[0..]),
+    );
+
+    testing.expectEqualSlices(
+        u8,
+        (Sint64{ .data = -1 }).encodeInto(buf1[0..]),
+        (Uint64{ .data = 1 }).encodeInto(buf2[0..]),
+    );
+
+    testing.expectEqualSlices(
+        u8,
+        (Sint64{ .data = 2147483647 }).encodeInto(buf1[0..]),
+        (Uint64{ .data = 4294967294 }).encodeInto(buf2[0..]),
+    );
+
+    testing.expectEqualSlices(
+        u8,
+        (Sint64{ .data = -2147483648 }).encodeInto(buf1[0..]),
+        (Uint64{ .data = 4294967295 }).encodeInto(buf2[0..]),
+    );
 }
