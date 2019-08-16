@@ -54,7 +54,7 @@ pub const Int64 = struct {
     }
 
     pub fn decode(bytes: []const u8, len: *usize) !Int64 {
-        const uint = try Vuint.decode(bytes, len);
+        const uint = try Uint64.decode(bytes, len);
         return Int64{ .data = @bitCast(i64, uint.data) };
     }
 };
@@ -65,16 +65,26 @@ pub const Sint64 = struct {
     pub const wire_type = WireType.Varint;
 
     pub fn encodeInto(self: Sint64, buffer: []u8) []u8 {
-        const uint = Uint64{ .data = @intCast(u64, (self.data << 1) ^ (self.data >> 63)) };
+        const uint = Uint64{ .data = @bitCast(u64, (self.data << 1) ^ (self.data >> 63)) };
         return uint.encodeInto(buffer);
     }
 
     pub fn decode(bytes: []const u8, len: *usize) !Int64 {
         const uint = try Uint64.decode(bytes, len);
-        const raw = @intCast(i64, uint.data >> 1);
+        const raw = @bitCast(i64, uint.data >> 1);
         return Int64{ .data = if (@mod(uint.data, 2) == 0) raw else -(raw + 1) };
     }
 };
+
+fn fieldType(comptime T: type, comptime name: []const u8) type {
+    for (@typeInfo(T).Struct.fields) |field| {
+        if (std.mem.eql(u8, field.name, name)) {
+            return field.field_type;
+        }
+    }
+
+    unreachable;
+}
 
 test "*int64" {
     var len: usize = 0;
@@ -113,4 +123,23 @@ test "*int64" {
         (Sint64{ .data = -2147483648 }).encodeInto(buf1[0..]),
         (Uint64{ .data = 4294967295 }).encodeInto(buf2[0..]),
     );
+}
+
+test "fuzz" {
+    var rng = std.rand.DefaultPrng.init(0);
+
+    inline for ([_]type{ Uint64, Int64, Sint64 }) |T| {
+        const data_type = fieldType(T, "data");
+
+        var i = usize(0);
+        while (i < 100) : (i += 1) {
+            var len: usize = undefined;
+            var buf: [1000]u8 = undefined;
+
+            const ref = T{ .data = rng.random.int(data_type) };
+            const bytes = ref.encodeInto(buf[0..]);
+            const converted = try T.decode(bytes, &len);
+            testing.expectEqual(ref.data, converted.data);
+        }
+    }
 }
