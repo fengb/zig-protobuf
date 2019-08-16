@@ -4,34 +4,25 @@ const testing = std.testing;
 const types = @import("types.zig");
 
 const FieldInfo = struct {
-    typ: Type,
+    wire_type: types.WireType,
     number: u61,
 
     pub fn init(value: u64) FieldInfo {
         return FieldInfo{
-            .typ = @intToEnum(Type, @truncate(u3, value)),
+            .wire_type = @intToEnum(types.WireType, @truncate(u3, value)),
             .number = @intCast(u61, value >> 3),
         };
     }
 
-    const Type = enum(u3) {
-        Varint = 0,
-        _64bit = 1,
-        LengthDelimited = 2,
-        StartGroup = 3,
-        EndGroup = 4,
-        _32bit = 5,
-    };
-
     pub fn encodeInto(self: FieldInfo, buffer: []u8) []u8 {
-        const uint = types.Uint64{ .data = (@intCast(u64, self.number) << 3) + @enumToInt(self.typ) };
+        const uint = types.Uint64{ .data = (@intCast(u64, self.number) << 3) + @enumToInt(self.wire_type) };
         return uint.encodeInto(buffer);
     }
 };
 
 test "FieldInfo" {
     const field = FieldInfo.init(8);
-    testing.expectEqual(FieldInfo.Type.Varint, field.typ);
+    testing.expectEqual(types.WireType.Varint, field.wire_type);
     testing.expectEqual(u61(1), field.number);
 }
 
@@ -58,18 +49,18 @@ pub fn StreamingMarshal(comptime T: type) type {
             var bufslice = buffer[0..];
 
             inline for (@typeInfo(T).Struct.fields) |field, i| {
-                const fieldInfo = FieldInfo{
-                    .typ = .Varint, // TODO: correct field type
-                    .number = @intCast(u64, i + 1),
-                };
-                Self.out = fieldInfo.encodeInto(bufslice);
-                suspend;
-
                 switch (@typeInfo(field.field_type)) {
                     .Struct => {
                         if (@hasDecl(field.field_type, "encodeInto")) {
-                            Self.out = @field(item, field.name).encodeInto(bufslice);
+                            const fieldInfo = FieldInfo{
+                                .wire_type = field.field_type.wire_type,
+                                .number = @intCast(u64, i + 1),
+                            };
                             suspend;
+                            Self.out = fieldInfo.encodeInto(bufslice);
+
+                            suspend;
+                            Self.out = @field(item, field.name).encodeInto(bufslice);
                         } else {
                             std.debug.warn("{} - unknown struct\n", field.name);
                         }
@@ -79,13 +70,14 @@ pub fn StreamingMarshal(comptime T: type) type {
                     },
                 }
             }
+            suspend;
             Self.out = null;
         }
 
         pub fn next(self: *Self) ?[]const u8 {
-            if (out) |result| {
+            if (out != null) {
                 resume self.frame;
-                return result;
+                return out;
             }
             return null;
         }
@@ -98,10 +90,12 @@ pub fn marshal(comptime T: type, allocator: *std.mem.Allocator, item: T) ![]u8 {
 
     var stream = StreamingMarshal(T).init(item);
 
+    std.debug.warn("\n");
     while (stream.next()) |data| {
-        std.debug.warn("data: 0x{x}\n", data);
+        std.debug.warn("0x{x} ", data);
         try buffer.appendSlice(data);
     }
+    std.debug.warn("\n");
 
     return buffer.toOwnedSlice();
 }
@@ -112,17 +106,11 @@ pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) T
 
 test "marshalling" {
     const Example = struct {
-        label: []const u8 = "",
-        @"type": types.Sint64,
-        reps: []const i64 = [_]i64{},
-
-        allocator: ?*std.mem.Allocator = null,
+        sint: types.Sint64,
     };
 
     const start = Example{
-        .label = "hello",
-        .@"type" = types.Sint64{ .data = 17 },
-        .reps = [_]i64{ 1, 2, 3 },
+        .sint = types.Sint64{ .data = 17 },
     };
     const binary = try marshal(Example, std.heap.direct_allocator, start);
     //const result = unmarshal(Example, std.heap.direct_allocator, binary);

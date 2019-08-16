@@ -1,8 +1,19 @@
 const std = @import("std");
 const testing = std.testing;
 
+pub const WireType = enum(u3) {
+    Varint = 0,
+    _64bit = 1,
+    LengthDelimited = 2,
+    StartGroup = 3,
+    EndGroup = 4,
+    _32bit = 5,
+};
+
 pub const Uint64 = struct {
     data: u64,
+
+    pub const wire_type = WireType.Varint;
 
     pub fn encodeInto(self: Uint64, buffer: []u8) []u8 {
         var i = usize(0);
@@ -35,6 +46,8 @@ pub const Uint64 = struct {
 pub const Int64 = struct {
     data: i64,
 
+    pub const wire_type = WireType.Varint;
+
     pub fn encodeInto(self: Int64, buffer: []u8) []u8 {
         const uint = Uint64{ .data = @bitCast(i64, self.data) };
         return uint.encodeInto(buffer);
@@ -48,6 +61,8 @@ pub const Int64 = struct {
 
 pub const Sint64 = struct {
     data: i64,
+
+    pub const wire_type = WireType.Varint;
 
     pub fn encodeInto(self: Sint64, buffer: []u8) []u8 {
         const uint = Uint64{ .data = @intCast(u64, (self.data << 1) ^ (self.data >> 63)) };
