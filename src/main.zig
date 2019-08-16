@@ -139,7 +139,7 @@ pub fn StreamingMarshal(comptime T: type) type {
 
         // TODO: this is so terrible.
         // Temporarily sticking this here because I can't make spin a method due to circular references
-        var out: ?[]u8 = [_]u8{};
+        var out: ?[]const u8 = [_]u8{};
 
         item: T,
         frame: @Frame(spin),
@@ -147,30 +147,41 @@ pub fn StreamingMarshal(comptime T: type) type {
         pub fn init(item: T) Self {
             return Self{
                 .item = item,
-                .frame = async spin(),
+                .frame = async spin(item),
             };
         }
 
-        fn spin() void {
+        fn spin(item: T) void {
             var buffer: [1000]u8 = undefined;
+            var bufslice = buffer[0..];
 
             inline for (@typeInfo(T).Struct.fields) |field, i| {
-                suspend;
                 const fieldInfo = FieldInfo{
-                    .typ = .Varint,
-                    .number = @intCast(u64, i),
+                    .typ = .Varint, // TODO: correct field type
+                    .number = @intCast(u64, i + 1),
                 };
-                // Work around copy elision bug
-                const copy = fieldInfo.encodeInto(buffer[0..]);
-                Self.out = copy;
+                Self.out = fieldInfo.encodeInto(bufslice);
+                suspend;
+
+                switch (@typeInfo(field.field_type)) {
+                    .Int => |int| {
+                        const value = @field(item, field.name);
+                        Self.out = if (int.is_signed) Varint64.initSint(value).encodeInto(bufslice) else Varint64.initUint(value).encodeInto(bufslice);
+                        suspend;
+                    },
+                    else => {
+                        std.debug.warn("Skipped {}\n", field.name);
+                        continue;
+                    },
+                }
             }
             Self.out = null;
         }
 
-        pub fn next(self: *Self) ?[]u8 {
-            if (out != null) {
+        pub fn next(self: *Self) ?[]const u8 {
+            if (out) |result| {
                 resume self.frame;
-                return out;
+                return result;
             }
             return null;
         }
