@@ -1,105 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 
-const Varint64 = struct {
-    uint: u64,
-    len: u10,
-
-    pub fn initUint(n: u64) Varint64 {
-        return Varint64{
-            .uint = n,
-            .len = 0, // FIXME
-        };
-    }
-
-    pub fn initInt(n: i64) Varint64 {
-        return initUint(@bitCast(u64, n));
-    }
-
-    pub fn initSint(n: i64) Varint64 {
-        return initUint(@intCast(u64, (n << 1) ^ (n >> 63)));
-    }
-
-    pub fn encodeInto(self: Varint64, buffer: []u8) []u8 {
-        var value = self.uint;
-        if (value == 0) {
-            buffer[0] = 0;
-            return buffer[0..1];
-        }
-
-        var i = usize(0);
-        while (value > 0) : (i += 1) {
-            buffer[i] = u8(0x80) + @truncate(u7, value);
-            value >>= 7;
-        }
-        buffer[i - 1] = buffer[i - 1] & 0x7F;
-        return buffer[0..i];
-    }
-
-    pub fn decode(bytes: []const u8) !Varint64 {
-        var result = Varint64{
-            .uint = 0,
-            .len = undefined,
-        };
-
-        for (bytes) |byte, i| {
-            if (i >= 10) {
-                return error.Whoops;
-            }
-            result.uint += @intCast(u64, 0x7F & byte) << (7 * @intCast(u6, i));
-            if (byte & 0x80 == 0) {
-                result.len = @intCast(u3, i + 1);
-                return result;
-            }
-        }
-        return error.Whoops;
-    }
-
-    pub fn int(self: Varint64) i64 {
-        return @bitCast(i64, self.uint);
-    }
-
-    pub fn sint(self: Varint64) i64 {
-        const raw = @intCast(i64, self.uint >> 1);
-        return if (@mod(self.uint, 2) == 0) raw else -(raw + 1);
-    }
-};
-
-test "Varint64" {
-    var vint = try Varint64.decode([_]u8{1});
-    testing.expectEqual(u64(1), vint.uint);
-
-    vint = try Varint64.decode([_]u8{ 0b10101100, 0b00000010 });
-    testing.expectEqual(u64(300), vint.uint);
-
-    vint = try Varint64.decode([_]u8{ 0b10010110, 0b00000001 });
-    testing.expectEqual(u64(150), vint.uint);
-
-    vint = Varint64.initUint(3);
-    testing.expectEqual(u64(3), vint.uint);
-
-    vint = Varint64.initInt(-1);
-    testing.expectEqual(u64(std.math.maxInt(u64)), vint.uint);
-    testing.expectEqual(i64(-1), vint.int());
-
-    vint = Varint64.initSint(-1);
-    testing.expectEqual(u64(1), vint.uint);
-    testing.expectEqual(i64(-1), vint.sint());
-
-    vint = Varint64.initSint(2147483647);
-    testing.expectEqual(u64(4294967294), vint.uint);
-    testing.expectEqual(i64(2147483647), vint.sint());
-
-    vint = Varint64.initSint(-2147483648);
-    testing.expectEqual(u64(4294967295), vint.uint);
-    testing.expectEqual(i64(-2147483648), vint.sint());
-
-    var buf: [1000]u8 = undefined;
-    vint = Varint64.initSint(-2147483648);
-    var result = vint.encodeInto(buf[0..]);
-    const new = try Varint64.decode(result);
-    testing.expectEqual(vint.uint, new.uint);
-}
+const types = @import("types.zig");
 
 const FieldInfo = struct {
     typ: Type,
@@ -122,8 +24,8 @@ const FieldInfo = struct {
     };
 
     pub fn encodeInto(self: FieldInfo, buffer: []u8) []u8 {
-        const val = (@intCast(u64, self.number) << 3) + @enumToInt(self.typ);
-        return Varint64.initUint(val).encodeInto(buffer);
+        const uint = types.Uint64{ .data = (@intCast(u64, self.number) << 3) + @enumToInt(self.typ) };
+        return uint.encodeInto(buffer);
     }
 };
 
@@ -164,14 +66,16 @@ pub fn StreamingMarshal(comptime T: type) type {
                 suspend;
 
                 switch (@typeInfo(field.field_type)) {
-                    .Int => |int| {
-                        const value = @field(item, field.name);
-                        Self.out = if (int.is_signed) Varint64.initSint(value).encodeInto(bufslice) else Varint64.initUint(value).encodeInto(bufslice);
-                        suspend;
+                    .Struct => {
+                        if (@hasDecl(field.field_type, "encodeInto")) {
+                            Self.out = @field(item, field.name).encodeInto(bufslice);
+                            suspend;
+                        } else {
+                            std.debug.warn("{} - unknown struct\n", field.name);
+                        }
                     },
                     else => {
-                        std.debug.warn("Skipped {}\n", field.name);
-                        continue;
+                        std.debug.warn("{} - not a struct\n", field.name);
                     },
                 }
             }
@@ -209,7 +113,7 @@ pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) T
 test "marshalling" {
     const Example = struct {
         label: []const u8 = "",
-        @"type": ?i32 = 77,
+        @"type": types.Sint64,
         reps: []const i64 = [_]i64{},
 
         allocator: ?*std.mem.Allocator = null,
@@ -217,11 +121,11 @@ test "marshalling" {
 
     const start = Example{
         .label = "hello",
-        .@"type" = 17,
+        .@"type" = types.Sint64{ .data = 17 },
         .reps = [_]i64{ 1, 2, 3 },
     };
     const binary = try marshal(Example, std.heap.direct_allocator, start);
-    const result = unmarshal(Example, std.heap.direct_allocator, binary);
+    //const result = unmarshal(Example, std.heap.direct_allocator, binary);
 
     //testing.expectEqualSlices(u8, start.label, result.label);
     //testing.expectEqual(start.@"type", result.@"type");
