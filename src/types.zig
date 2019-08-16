@@ -22,7 +22,7 @@ pub const Uint64 = struct {
             buffer[i] = u8(0x80) + @truncate(u7, value);
             value >>= 7;
         }
-        buffer[i - 1] = buffer[i - 1] & 0x7F;
+        buffer[i - 1] &= 0x7F;
         return buffer[0..i];
     }
 
