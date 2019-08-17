@@ -21,6 +21,10 @@ pub const Uint64 = struct {
     pub const wire_type = WireType.Varint;
 
     pub fn encodeInto(self: Uint64, buffer: []u8) []u8 {
+        if (self.data == 0) {
+            buffer[0] = 0;
+            return buffer[0..1];
+        }
         var i = usize(0);
         var value = self.data;
         while (value > 0) : (i += 1) {
@@ -88,11 +92,11 @@ pub const Sint64 = struct {
     }
 };
 
-pub const Uint32 = FromCoercion(u32, Uint64);
-pub const Int32 = FromCoercion(i32, Int64);
-pub const Sint32 = FromCoercion(i32, Sint64);
+pub const Uint32 = FromIntCast(u32, Uint64);
+pub const Int32 = FromIntCast(i32, Int64);
+pub const Sint32 = FromIntCast(i32, Sint64);
 
-fn FromCoercion(comptime TargetPrimitive: type, comptime SourceType: type) type {
+fn FromIntCast(comptime TargetPrimitive: type, comptime SourceType: type) type {
     return struct {
         const Self = @This();
 
@@ -332,6 +336,39 @@ test "Bytes/String" {
                 const converted = try T.decode(encoded_slice, &len, std.heap.direct_allocator);
                 testing.expectEqualSlices(u8, ref.data, converted.data);
             }
+        }
+    }
+}
+
+pub const Bool = struct {
+    data: bool,
+
+    pub const wire_type = WireType.Varint;
+
+    pub fn encodeInto(self: Bool, buffer: []u8) []u8 {
+        return (Uint64{ .data = if (self.data) u64(1) else 0 }).encodeInto(buffer);
+    }
+
+    pub fn decode(bytes: []const u8, len: *usize) ParseError!Bool {
+        const source = try Uint64.decode(bytes, len);
+        // TODO: verify that bools *must* be 0 or 1
+        if (source.data > 1) {
+            return error.Overflow;
+        }
+        return Bool{ .data = if (source.data == 0) false else true };
+    }
+};
+
+test "Bool" {
+    @"fuzz": {
+        inline for ([_]bool{ false, true }) |b| {
+            var len: usize = undefined;
+            var buf: [1000]u8 = undefined;
+
+            const ref = Bool{ .data = b };
+            const bytes = ref.encodeInto(buf[0..]);
+            const converted = try Bool.decode(bytes, &len);
+            testing.expectEqual(ref.data, converted.data);
         }
     }
 }
