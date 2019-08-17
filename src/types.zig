@@ -1,6 +1,11 @@
 const std = @import("std");
 const testing = std.testing;
 
+const ParseError = error{
+    Overflow,
+    EndOfStream,
+};
+
 pub const WireType = enum(u3) {
     Varint = 0,
     _64bit = 1,
@@ -26,12 +31,12 @@ pub const Uint64 = struct {
         return buffer[0..i];
     }
 
-    pub fn decode(bytes: []const u8, len: *usize) !Uint64 {
+    pub fn decode(bytes: []const u8, len: *usize) ParseError!Uint64 {
         var value = u64(0);
 
         for (bytes) |byte, i| {
             if (i >= 10) {
-                return error.Whoops;
+                return error.Overflow;
             }
             value += @intCast(u64, 0x7F & byte) << (7 * @intCast(u6, i));
             if (byte & 0x80 == 0) {
@@ -39,25 +44,32 @@ pub const Uint64 = struct {
                 return Uint64{ .data = value };
             }
         }
-        return error.Whoops;
+        // TODO: stream in bytes
+        return error.EndOfStream;
     }
 };
 
-pub const Int64 = struct {
-    data: i64,
+pub const Int64 = FromBitcast(i64, Uint64);
 
-    pub const wire_type = WireType.Varint;
+fn FromBitcast(comptime TargetPrimitive: type, comptime SourceType: type) type {
+    return struct {
+        data: TargetPrimitive,
 
-    pub fn encodeInto(self: Int64, buffer: []u8) []u8 {
-        const uint = Uint64{ .data = @bitCast(i64, self.data) };
-        return uint.encodeInto(buffer);
-    }
+        const Self = @This();
 
-    pub fn decode(bytes: []const u8, len: *usize) !Int64 {
-        const uint = try Uint64.decode(bytes, len);
-        return Int64{ .data = @bitCast(i64, uint.data) };
-    }
-};
+        pub const wire_type = WireType.Varint;
+
+        pub fn encodeInto(self: Self, buffer: []u8) []u8 {
+            const source = SourceType{ .data = @bitCast(TargetPrimitive, self.data) };
+            return source.encodeInto(buffer);
+        }
+
+        pub fn decode(bytes: []const u8, len: *usize) ParseError!Self {
+            const source = try SourceType.decode(bytes, len);
+            return Self{ .data = @bitCast(TargetPrimitive, source.data) };
+        }
+    };
+}
 
 pub const Sint64 = struct {
     data: i64,
@@ -69,18 +81,18 @@ pub const Sint64 = struct {
         return uint.encodeInto(buffer);
     }
 
-    pub fn decode(bytes: []const u8, len: *usize) !Sint64 {
+    pub fn decode(bytes: []const u8, len: *usize) ParseError!Sint64 {
         const uint = try Uint64.decode(bytes, len);
         const raw = @bitCast(i64, uint.data >> 1);
         return Sint64{ .data = if (@mod(uint.data, 2) == 0) raw else -(raw + 1) };
     }
 };
 
-pub const Uint32 = Varint32From64(Uint64, u32);
-pub const Int32 = Varint32From64(Int64, i32);
-pub const Sint32 = Varint32From64(Sint64, i32);
+pub const Uint32 = FromCoercion(u32, Uint64);
+pub const Int32 = FromCoercion(i32, Int64);
+pub const Sint32 = FromCoercion(i32, Sint64);
 
-fn Varint32From64(comptime SourceType: type, comptime TargetPrimitive: type) type {
+fn FromCoercion(comptime TargetPrimitive: type, comptime SourceType: type) type {
     return struct {
         const Self = @This();
 
@@ -92,7 +104,7 @@ fn Varint32From64(comptime SourceType: type, comptime TargetPrimitive: type) typ
             return (SourceType{ .data = self.data }).encodeInto(buffer);
         }
 
-        pub fn decode(bytes: []const u8, len: *usize) !Self {
+        pub fn decode(bytes: []const u8, len: *usize) ParseError!Self {
             const source = try SourceType.decode(bytes, len);
             return Self{ .data = @intCast(TargetPrimitive, source.data) };
         }
@@ -109,7 +121,7 @@ fn fieldType(comptime T: type, comptime name: []const u8) type {
     unreachable;
 }
 
-test "Varint" {
+test "Var int" {
     var len: usize = 0;
 
     var uint = try Uint64.decode([_]u8{1}, &len);
@@ -158,6 +170,81 @@ test "Varint" {
                 var buf: [1000]u8 = undefined;
 
                 const ref = T{ .data = rng.random.int(data_type) };
+                const bytes = ref.encodeInto(buf[0..]);
+                const converted = try T.decode(bytes, &len);
+                testing.expectEqual(ref.data, converted.data);
+            }
+        }
+    }
+}
+
+pub const Fixed64 = struct {
+    data: u64,
+
+    pub const wire_type = WireType._64bit;
+
+    pub fn encodeInto(self: Fixed64, buffer: []u8) []u8 {
+        var result = buffer[0..8];
+        std.mem.writeIntSliceLittle(u64, result, self.data);
+        return result;
+    }
+
+    pub fn decode(bytes: []const u8, len: *usize) ParseError!Fixed64 {
+        len.* = 8;
+        return Fixed64{ .data = std.mem.readIntSliceLittle(u64, bytes) };
+    }
+};
+
+pub const Fixed32 = struct {
+    data: u32,
+
+    pub const wire_type = WireType._32bit;
+
+    pub fn encodeInto(self: Fixed32, buffer: []u8) []u8 {
+        var result = buffer[0..8];
+        std.mem.writeIntSliceLittle(u32, result, self.data);
+        return result;
+    }
+
+    pub fn decode(bytes: []const u8, len: *usize) ParseError!Fixed32 {
+        len.* = 8;
+        return Fixed32{ .data = std.mem.readIntSliceLittle(u32, bytes) };
+    }
+};
+
+pub const SFixed64 = FromBitcast(i64, Fixed64);
+pub const SFixed32 = FromBitcast(i32, Fixed32);
+pub const Double = FromBitcast(f64, Fixed64);
+pub const Float = FromBitcast(f32, Fixed32);
+
+test "Fixed numbers" {
+    @"fuzz": {
+        var rng = std.rand.DefaultPrng.init(0);
+
+        inline for ([_]type{ Fixed64, Fixed32, SFixed64, SFixed32 }) |T| {
+            const data_type = fieldType(T, "data");
+
+            var i = usize(0);
+            while (i < 100) : (i += 1) {
+                var len: usize = undefined;
+                var buf: [1000]u8 = undefined;
+
+                const ref = T{ .data = rng.random.int(data_type) };
+                const bytes = ref.encodeInto(buf[0..]);
+                const converted = try T.decode(bytes, &len);
+                testing.expectEqual(ref.data, converted.data);
+            }
+        }
+
+        inline for ([_]type{ Double, Float }) |T| {
+            const data_type = fieldType(T, "data");
+
+            var i = usize(0);
+            while (i < 100) : (i += 1) {
+                var len: usize = undefined;
+                var buf: [1000]u8 = undefined;
+
+                const ref = T{ .data = rng.random.float(data_type) };
                 const bytes = ref.encodeInto(buf[0..]);
                 const converted = try T.decode(bytes, &len);
                 testing.expectEqual(ref.data, converted.data);
