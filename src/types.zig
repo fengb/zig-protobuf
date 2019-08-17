@@ -86,7 +86,7 @@ fn fieldType(comptime T: type, comptime name: []const u8) type {
     unreachable;
 }
 
-test "*int64" {
+test "Varint64" {
     var len: usize = 0;
 
     var uint = try Uint64.decode([_]u8{1}, &len);
@@ -140,6 +140,89 @@ test "fuzz" {
             const bytes = ref.encodeInto(buf[0..]);
             const converted = try T.decode(bytes, &len);
             testing.expectEqual(ref.data, converted.data);
+        }
+    }
+}
+
+pub const Bytes = struct {
+    data: []u8,
+    allocator: ?*std.mem.Allocator = null,
+
+    pub const wire_type = WireType.LengthDelimited;
+
+    pub fn encodeInto(self: Bytes, buffer: []u8) []u8 {
+        const header = (Uint64{ .data = self.data.len }).encodeInto(buffer);
+        // TODO: use a generator instead of buffer overflow
+        std.mem.copy(u8, buffer[header.len..], self.data);
+        return buffer[0 .. header.len + self.data.len];
+    }
+
+    pub fn decode(raw: []const u8, len: *usize, allocator: *std.mem.Allocator) !Bytes {
+        var header_len: usize = undefined;
+        const header = try Uint64.decode(raw, &header_len);
+
+        var data = try allocator.alloc(u8, header.data);
+        errdefer allocator.free(data);
+
+        std.mem.copy(u8, data, raw[header_len .. header_len + data.len]);
+        len.* = header_len + data.len;
+
+        return Bytes{
+            .data = data,
+            .allocator = allocator,
+        };
+    }
+};
+
+pub const String = struct {
+    data: []u8,
+    allocator: ?*std.mem.Allocator = null,
+
+    pub const wire_type = WireType.LengthDelimited;
+
+    pub fn encodeInto(self: String, buffer: []u8) []u8 {
+        return (Bytes{ .data = self.data }).encodeInto(buffer);
+    }
+
+    pub fn decode(raw: []const u8, len: *usize, allocator: *std.mem.Allocator) !Bytes {
+        var bytes = try Bytes.decode(raw, len, allocator);
+        // TODO: validate unicode
+        return String{
+            .data = bytes.data,
+            .allocator = bytes.allocator,
+        };
+    }
+};
+
+test "Bytes/String" {
+    var buffer: [1000]u8 = undefined;
+    var raw = "testing";
+
+    var bytes = Bytes{ .data = raw[0..] };
+    testing.expectEqualSlices(
+        u8,
+        [_]u8{ 0x07, 0x74, 0x65, 0x73, 0x74, 0x69, 0x6e, 0x67 },
+        bytes.encodeInto(buffer[0..]),
+    );
+
+    @"fuzz": {
+        var rng = std.rand.DefaultPrng.init(0);
+
+        inline for ([_]type{ Bytes, String }) |T| {
+            const data_type = fieldType(T, "data");
+
+            var i = usize(0);
+            while (i < 100) : (i += 1) {
+                var len: usize = undefined;
+                var encode_buf: [1000]u8 = undefined;
+                var data_buf: [500]u8 = undefined;
+                rng.random.bytes(data_buf[0..]);
+
+                const ref = T{ .data = data_buf[0..] };
+                const encoded_slice = ref.encodeInto(encode_buf[0..]);
+                const converted = try T.decode(encoded_slice, &len, std.heap.direct_allocator);
+                testing.expectEqualSlices(u8, ref.data, converted.data);
+            }
         }
     }
 }
