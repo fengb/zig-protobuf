@@ -69,12 +69,35 @@ pub const Sint64 = struct {
         return uint.encodeInto(buffer);
     }
 
-    pub fn decode(bytes: []const u8, len: *usize) !Int64 {
+    pub fn decode(bytes: []const u8, len: *usize) !Sint64 {
         const uint = try Uint64.decode(bytes, len);
         const raw = @bitCast(i64, uint.data >> 1);
-        return Int64{ .data = if (@mod(uint.data, 2) == 0) raw else -(raw + 1) };
+        return Sint64{ .data = if (@mod(uint.data, 2) == 0) raw else -(raw + 1) };
     }
 };
+
+pub const Uint32 = Varint32From64(Uint64, u32);
+pub const Int32 = Varint32From64(Int64, i32);
+pub const Sint32 = Varint32From64(Sint64, i32);
+
+fn Varint32From64(comptime SourceType: type, comptime TargetPrimitive: type) type {
+    return struct {
+        const Self = @This();
+
+        data: TargetPrimitive,
+
+        pub const wire_type = WireType.Varint;
+
+        pub fn encodeInto(self: Self, buffer: []u8) []u8 {
+            return (SourceType{ .data = self.data }).encodeInto(buffer);
+        }
+
+        pub fn decode(bytes: []const u8, len: *usize) !Self {
+            const source = try SourceType.decode(bytes, len);
+            return Self{ .data = @intCast(TargetPrimitive, source.data) };
+        }
+    };
+}
 
 fn fieldType(comptime T: type, comptime name: []const u8) type {
     for (@typeInfo(T).Struct.fields) |field| {
@@ -86,7 +109,7 @@ fn fieldType(comptime T: type, comptime name: []const u8) type {
     unreachable;
 }
 
-test "Varint64" {
+test "Varint" {
     var len: usize = 0;
 
     var uint = try Uint64.decode([_]u8{1}, &len);
@@ -123,23 +146,22 @@ test "Varint64" {
         (Sint64{ .data = -2147483648 }).encodeInto(buf1[0..]),
         (Uint64{ .data = 4294967295 }).encodeInto(buf2[0..]),
     );
-}
 
-test "fuzz" {
-    var rng = std.rand.DefaultPrng.init(0);
+    @"fuzz": {
+        var rng = std.rand.DefaultPrng.init(0);
 
-    inline for ([_]type{ Uint64, Int64, Sint64 }) |T| {
-        const data_type = fieldType(T, "data");
+        inline for ([_]type{ Uint64, Int64, Sint64, Uint32, Int32, Sint32 }) |T| {
+            const data_type = fieldType(T, "data");
 
-        var i = usize(0);
-        while (i < 100) : (i += 1) {
-            var len: usize = undefined;
-            var buf: [1000]u8 = undefined;
+            var i = usize(0);
+            while (i < 100) : (i += 1) {
+                var buf: [1000]u8 = undefined;
 
-            const ref = T{ .data = rng.random.int(data_type) };
-            const bytes = ref.encodeInto(buf[0..]);
-            const converted = try T.decode(bytes, &len);
-            testing.expectEqual(ref.data, converted.data);
+                const ref = T{ .data = rng.random.int(data_type) };
+                const bytes = ref.encodeInto(buf[0..]);
+                const converted = try T.decode(bytes, &len);
+                testing.expectEqual(ref.data, converted.data);
+            }
         }
     }
 }
