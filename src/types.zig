@@ -139,6 +139,29 @@ fn FromIntCast(comptime TargetPrimitive: type, comptime SourceType: type) type {
     };
 }
 
+var rng = std.rand.DefaultPrng.init(0);
+fn testEncodeDecode(comptime T: type, base: T) !void {
+    var decoded_len: usize = undefined;
+    var buf: [1000]u8 = undefined;
+
+    const encoded_slice = base.encodeInto(buf[0..]);
+    testing.expectEqual(base.encodeSize(), encoded_slice.len);
+    const decoded = try T.decode(encoded_slice, &decoded_len);
+    testing.expectEqual(base.data, decoded.data);
+    testing.expectEqual(base.encodeSize(), decoded_len);
+}
+
+fn testEncodeDecodeSlices(comptime T: type, base: T) !void {
+    var decoded_len: usize = undefined;
+    var buf: [1000]u8 = undefined;
+
+    const encoded_slice = base.encodeInto(buf[0..]);
+    testing.expectEqual(base.encodeSize(), encoded_slice.len);
+    const decoded = try T.decode(encoded_slice, &decoded_len, std.heap.direct_allocator);
+    testing.expectEqualSlices(u8, base.data, decoded.data);
+    testing.expectEqual(base.encodeSize(), decoded_len);
+}
+
 test "Var int" {
     var len: usize = 0;
 
@@ -178,20 +201,13 @@ test "Var int" {
     );
 
     @"fuzz": {
-        var rng = std.rand.DefaultPrng.init(0);
-
         inline for ([_]type{ Uint64, Int64, Sint64, Uint32, Int32, Sint32 }) |T| {
             const data_field = std.meta.fieldInfo(T, "data");
 
             var i = usize(0);
             while (i < 100) : (i += 1) {
-                var buf: [1000]u8 = undefined;
-
-                const ref = T{ .data = rng.random.int(data_field.field_type) };
-                const bytes = ref.encodeInto(buf[0..]);
-                testing.expectEqual(ref.encodeSize(), bytes.len);
-                const converted = try T.decode(bytes, &len);
-                testing.expectEqual(ref.data, converted.data);
+                const base = T{ .data = rng.random.int(data_field.field_type) };
+                try testEncodeDecode(T, base);
             }
         }
     }
@@ -234,7 +250,7 @@ pub const Fixed32 = struct {
     }
 
     pub fn decode(bytes: []const u8, len: *usize) ParseError!Fixed32 {
-        len.* = 8;
+        len.* = 4;
         return Fixed32{ .data = std.mem.readIntSliceLittle(u32, bytes) };
     }
 };
@@ -246,21 +262,13 @@ pub const Float = FromBitcast(f32, Fixed32);
 
 test "Fixed numbers" {
     @"fuzz": {
-        var rng = std.rand.DefaultPrng.init(0);
-
         inline for ([_]type{ Fixed64, Fixed32, Sfixed64, Sfixed32 }) |T| {
             const data_field = std.meta.fieldInfo(T, "data");
 
             var i = usize(0);
             while (i < 100) : (i += 1) {
-                var len: usize = undefined;
-                var buf: [1000]u8 = undefined;
-
-                const ref = T{ .data = rng.random.int(data_field.field_type) };
-                const bytes = ref.encodeInto(buf[0..]);
-                testing.expectEqual(ref.encodeSize(), bytes.len);
-                const converted = try T.decode(bytes, &len);
-                testing.expectEqual(ref.data, converted.data);
+                const base = T{ .data = rng.random.int(data_field.field_type) };
+                try testEncodeDecode(T, base);
             }
         }
 
@@ -269,14 +277,8 @@ test "Fixed numbers" {
 
             var i = usize(0);
             while (i < 100) : (i += 1) {
-                var len: usize = undefined;
-                var buf: [1000]u8 = undefined;
-
-                const ref = T{ .data = rng.random.float(data_field.field_type) };
-                const bytes = ref.encodeInto(buf[0..]);
-                testing.expectEqual(ref.encodeSize(), bytes.len);
-                const converted = try T.decode(bytes, &len);
-                testing.expectEqual(ref.data, converted.data);
+                const base = T{ .data = rng.random.float(data_field.field_type) };
+                try testEncodeDecode(T, base);
             }
         }
     }
@@ -353,21 +355,14 @@ test "Bytes/String" {
     );
 
     @"fuzz": {
-        var rng = std.rand.DefaultPrng.init(0);
-
         inline for ([_]type{ Bytes, String }) |T| {
             var i = usize(0);
             while (i < 100) : (i += 1) {
-                var len: usize = undefined;
-                var encode_buf: [1000]u8 = undefined;
-                var data_buf: [500]u8 = undefined;
-                rng.random.bytes(data_buf[0..]);
+                var base_buf: [500]u8 = undefined;
+                rng.random.bytes(base_buf[0..]);
 
-                const ref = T{ .data = data_buf[0..] };
-                const encoded_slice = ref.encodeInto(encode_buf[0..]);
-                testing.expectEqual(ref.encodeSize(), encoded_slice.len);
-                const converted = try T.decode(encoded_slice, &len, std.heap.direct_allocator);
-                testing.expectEqualSlices(u8, ref.data, converted.data);
+                const base = T{ .data = base_buf[0..] };
+                try testEncodeDecodeSlices(T, base);
             }
         }
     }
@@ -399,14 +394,8 @@ pub const Bool = struct {
 test "Bool" {
     @"fuzz": {
         inline for ([_]bool{ false, true }) |b| {
-            var len: usize = undefined;
-            var buf: [1000]u8 = undefined;
-
-            const ref = Bool{ .data = b };
-            const bytes = ref.encodeInto(buf[0..]);
-            testing.expectEqual(ref.encodeSize(), bytes.len);
-            const converted = try Bool.decode(bytes, &len);
-            testing.expectEqual(ref.data, converted.data);
+            const base = Bool{ .data = b };
+            try testEncodeDecode(Bool, base);
         }
     }
 }
