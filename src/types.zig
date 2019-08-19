@@ -115,16 +115,6 @@ fn FromIntCast(comptime TargetPrimitive: type, comptime SourceType: type) type {
     };
 }
 
-fn fieldType(comptime T: type, comptime name: []const u8) type {
-    for (@typeInfo(T).Struct.fields) |field| {
-        if (std.mem.eql(u8, field.name, name)) {
-            return field.field_type;
-        }
-    }
-
-    unreachable;
-}
-
 test "Var int" {
     var len: usize = 0;
 
@@ -167,13 +157,13 @@ test "Var int" {
         var rng = std.rand.DefaultPrng.init(0);
 
         inline for ([_]type{ Uint64, Int64, Sint64, Uint32, Int32, Sint32 }) |T| {
-            const data_type = fieldType(T, "data");
+            const data_field = std.meta.fieldInfo(T, "data");
 
             var i = usize(0);
             while (i < 100) : (i += 1) {
                 var buf: [1000]u8 = undefined;
 
-                const ref = T{ .data = rng.random.int(data_type) };
+                const ref = T{ .data = rng.random.int(data_field.field_type) };
                 const bytes = ref.encodeInto(buf[0..]);
                 const converted = try T.decode(bytes, &len);
                 testing.expectEqual(ref.data, converted.data);
@@ -226,14 +216,14 @@ test "Fixed numbers" {
         var rng = std.rand.DefaultPrng.init(0);
 
         inline for ([_]type{ Fixed64, Fixed32, Sfixed64, Sfixed32 }) |T| {
-            const data_type = fieldType(T, "data");
+            const data_field = std.meta.fieldInfo(T, "data");
 
             var i = usize(0);
             while (i < 100) : (i += 1) {
                 var len: usize = undefined;
                 var buf: [1000]u8 = undefined;
 
-                const ref = T{ .data = rng.random.int(data_type) };
+                const ref = T{ .data = rng.random.int(data_field.field_type) };
                 const bytes = ref.encodeInto(buf[0..]);
                 const converted = try T.decode(bytes, &len);
                 testing.expectEqual(ref.data, converted.data);
@@ -241,14 +231,14 @@ test "Fixed numbers" {
         }
 
         inline for ([_]type{ Double, Float }) |T| {
-            const data_type = fieldType(T, "data");
+            const data_field = std.meta.fieldInfo(T, "data");
 
             var i = usize(0);
             while (i < 100) : (i += 1) {
                 var len: usize = undefined;
                 var buf: [1000]u8 = undefined;
 
-                const ref = T{ .data = rng.random.float(data_type) };
+                const ref = T{ .data = rng.random.float(data_field.field_type) };
                 const bytes = ref.encodeInto(buf[0..]);
                 const converted = try T.decode(bytes, &len);
                 testing.expectEqual(ref.data, converted.data);
@@ -322,8 +312,6 @@ test "Bytes/String" {
         var rng = std.rand.DefaultPrng.init(0);
 
         inline for ([_]type{ Bytes, String }) |T| {
-            const data_type = fieldType(T, "data");
-
             var i = usize(0);
             while (i < 100) : (i += 1) {
                 var len: usize = undefined;
