@@ -3,12 +3,19 @@ const testing = std.testing;
 
 const types = @import("types.zig");
 
+pub const Double = types.Double;
+pub const Float = types.Float;
 pub const Int64 = types.Int64;
 pub const Int32 = types.Int32;
 pub const Uint64 = types.Uint64;
 pub const Uint32 = types.Uint32;
 pub const Sint64 = types.Sint64;
 pub const Sint32 = types.Sint32;
+pub const Fixed64 = types.Fixed64;
+pub const Fixed32 = types.Fixed32;
+pub const Sfixed64 = types.Sfixed64;
+pub const Sfixed32 = types.Sfixed32;
+pub const Bool = types.Bool;
 pub const Bytes = types.Bytes;
 pub const String = types.String;
 

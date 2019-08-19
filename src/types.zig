@@ -216,8 +216,8 @@ pub const Fixed32 = struct {
     }
 };
 
-pub const SFixed64 = FromBitcast(i64, Fixed64);
-pub const SFixed32 = FromBitcast(i32, Fixed32);
+pub const Sfixed64 = FromBitcast(i64, Fixed64);
+pub const Sfixed32 = FromBitcast(i32, Fixed32);
 pub const Double = FromBitcast(f64, Fixed64);
 pub const Float = FromBitcast(f32, Fixed32);
 
@@ -225,7 +225,7 @@ test "Fixed numbers" {
     @"fuzz": {
         var rng = std.rand.DefaultPrng.init(0);
 
-        inline for ([_]type{ Fixed64, Fixed32, SFixed64, SFixed32 }) |T| {
+        inline for ([_]type{ Fixed64, Fixed32, Sfixed64, Sfixed32 }) |T| {
             const data_type = fieldType(T, "data");
 
             var i = usize(0);
