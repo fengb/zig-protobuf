@@ -15,10 +15,19 @@ pub const WireType = enum(u3) {
     _32bit = 5,
 };
 
+fn divCeil(comptime T: type, numerator: T, denominator: T) T {
+    return (numerator + denominator - 1) / denominator;
+}
+
 pub const Uint64 = struct {
     data: u64,
 
     pub const wire_type = WireType.Varint;
+
+    pub fn encodeSize(self: Uint64) usize {
+        const bits = u64.bit_count - @clz(u64, self.data);
+        return std.math.max(divCeil(u64, bits, 7), 1);
+    }
 
     pub fn encodeInto(self: Uint64, buffer: []u8) []u8 {
         if (self.data == 0) {
@@ -63,6 +72,11 @@ fn FromBitcast(comptime TargetPrimitive: type, comptime SourceType: type) type {
 
         pub const wire_type = WireType.Varint;
 
+        pub fn encodeSize(self: Self) usize {
+            const source = SourceType{ .data = @bitCast(TargetPrimitive, self.data) };
+            return source.encodeSize();
+        }
+
         pub fn encodeInto(self: Self, buffer: []u8) []u8 {
             const source = SourceType{ .data = @bitCast(TargetPrimitive, self.data) };
             return source.encodeInto(buffer);
@@ -80,15 +94,20 @@ pub const Sint64 = struct {
 
     pub const wire_type = WireType.Varint;
 
+    pub fn encodeSize(self: Sint64) usize {
+        const source = Uint64{ .data = @bitCast(u64, (self.data << 1) ^ (self.data >> 63)) };
+        return source.encodeSize();
+    }
+
     pub fn encodeInto(self: Sint64, buffer: []u8) []u8 {
-        const uint = Uint64{ .data = @bitCast(u64, (self.data << 1) ^ (self.data >> 63)) };
-        return uint.encodeInto(buffer);
+        const source = Uint64{ .data = @bitCast(u64, (self.data << 1) ^ (self.data >> 63)) };
+        return source.encodeInto(buffer);
     }
 
     pub fn decode(bytes: []const u8, len: *usize) ParseError!Sint64 {
-        const uint = try Uint64.decode(bytes, len);
-        const raw = @bitCast(i64, uint.data >> 1);
-        return Sint64{ .data = if (@mod(uint.data, 2) == 0) raw else -(raw + 1) };
+        const source = try Uint64.decode(bytes, len);
+        const raw = @bitCast(i64, source.data >> 1);
+        return Sint64{ .data = if (@mod(source.data, 2) == 0) raw else -(raw + 1) };
     }
 };
 
@@ -103,6 +122,11 @@ fn FromIntCast(comptime TargetPrimitive: type, comptime SourceType: type) type {
         data: TargetPrimitive,
 
         pub const wire_type = WireType.Varint;
+
+        pub fn encodeSize(self: Self) usize {
+            const source = SourceType{ .data = self.data };
+            return source.encodeSize();
+        }
 
         pub fn encodeInto(self: Self, buffer: []u8) []u8 {
             return (SourceType{ .data = self.data }).encodeInto(buffer);
@@ -165,6 +189,7 @@ test "Var int" {
 
                 const ref = T{ .data = rng.random.int(data_field.field_type) };
                 const bytes = ref.encodeInto(buf[0..]);
+                testing.expectEqual(ref.encodeSize(), bytes.len);
                 const converted = try T.decode(bytes, &len);
                 testing.expectEqual(ref.data, converted.data);
             }
@@ -177,8 +202,12 @@ pub const Fixed64 = struct {
 
     pub const wire_type = WireType._64bit;
 
+    pub fn encodeSize(self: Fixed64) usize {
+        return 8;
+    }
+
     pub fn encodeInto(self: Fixed64, buffer: []u8) []u8 {
-        var result = buffer[0..8];
+        var result = buffer[0..self.encodeSize()];
         std.mem.writeIntSliceLittle(u64, result, self.data);
         return result;
     }
@@ -194,8 +223,12 @@ pub const Fixed32 = struct {
 
     pub const wire_type = WireType._32bit;
 
+    pub fn encodeSize(self: Fixed32) usize {
+        return 4;
+    }
+
     pub fn encodeInto(self: Fixed32, buffer: []u8) []u8 {
-        var result = buffer[0..8];
+        var result = buffer[0..self.encodeSize()];
         std.mem.writeIntSliceLittle(u32, result, self.data);
         return result;
     }
@@ -225,6 +258,7 @@ test "Fixed numbers" {
 
                 const ref = T{ .data = rng.random.int(data_field.field_type) };
                 const bytes = ref.encodeInto(buf[0..]);
+                testing.expectEqual(ref.encodeSize(), bytes.len);
                 const converted = try T.decode(bytes, &len);
                 testing.expectEqual(ref.data, converted.data);
             }
@@ -240,6 +274,7 @@ test "Fixed numbers" {
 
                 const ref = T{ .data = rng.random.float(data_field.field_type) };
                 const bytes = ref.encodeInto(buf[0..]);
+                testing.expectEqual(ref.encodeSize(), bytes.len);
                 const converted = try T.decode(bytes, &len);
                 testing.expectEqual(ref.data, converted.data);
             }
@@ -252,6 +287,11 @@ pub const Bytes = struct {
     allocator: ?*std.mem.Allocator = null,
 
     pub const wire_type = WireType.LengthDelimited;
+
+    pub fn encodeSize(self: Bytes) usize {
+        const header_size = (Uint64{ .data = self.data.len }).encodeSize();
+        return header_size + self.data.len;
+    }
 
     pub fn encodeInto(self: Bytes, buffer: []u8) []u8 {
         const header = (Uint64{ .data = self.data.len }).encodeInto(buffer);
@@ -282,6 +322,10 @@ pub const String = struct {
     allocator: ?*std.mem.Allocator = null,
 
     pub const wire_type = WireType.LengthDelimited;
+
+    pub fn encodeSize(self: String) usize {
+        return (Bytes{ .data = self.data }).encodeSize();
+    }
 
     pub fn encodeInto(self: String, buffer: []u8) []u8 {
         return (Bytes{ .data = self.data }).encodeInto(buffer);
@@ -321,6 +365,7 @@ test "Bytes/String" {
 
                 const ref = T{ .data = data_buf[0..] };
                 const encoded_slice = ref.encodeInto(encode_buf[0..]);
+                testing.expectEqual(ref.encodeSize(), encoded_slice.len);
                 const converted = try T.decode(encoded_slice, &len, std.heap.direct_allocator);
                 testing.expectEqualSlices(u8, ref.data, converted.data);
             }
@@ -332,6 +377,10 @@ pub const Bool = struct {
     data: bool,
 
     pub const wire_type = WireType.Varint;
+
+    pub fn encodeSize(self: Bool) usize {
+        return 1;
+    }
 
     pub fn encodeInto(self: Bool, buffer: []u8) []u8 {
         return (Uint64{ .data = if (self.data) u64(1) else 0 }).encodeInto(buffer);
@@ -355,6 +404,7 @@ test "Bool" {
 
             const ref = Bool{ .data = b };
             const bytes = ref.encodeInto(buf[0..]);
+            testing.expectEqual(ref.encodeSize(), bytes.len);
             const converted = try Bool.decode(bytes, &len);
             testing.expectEqual(ref.data, converted.data);
         }
