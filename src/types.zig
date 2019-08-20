@@ -411,14 +411,14 @@ pub fn Repeated(comptime T: type) type {
 
     return struct {
         const Self = @This();
-        const List = std.ArrayList(DataType);
 
-        data: ?List = null,
+        data: []DataType = [_]DataType{},
+        allocator: ?*std.mem.Allocator = null,
+        _decoder: ?std.ArrayList(DataType) = null,
 
-        pub fn init(allocator: *std.mem.Allocator) Self {
-            return Self{
-                .data = List.init(allocator),
-            };
+        fn initDecoder(self: *Self, allocator: *std.mem.Allocator) void {
+            std.debug.assert(self.data.len == 0);
+            self._decoder = std.ArrayList(DataType).init(allocator);
         }
 
         pub fn encodeSize(self: Self) usize {
@@ -441,13 +441,13 @@ pub fn Repeated(comptime T: type) type {
         }
 
         pub fn decodeOne(self: *Self, raw: []const u8, len: *usize) ParseError!void {
-            std.debug.assert(self.data != null);
+            std.debug.assert(self._decoder != null);
             const base = try T.decode(raw, len);
-            try self.data.?.append(base.data);
+            try self._decoder.?.append(base.data);
         }
 
         pub fn decodePacked(self: *Self, raw: []const u8, len: *usize) ParseError!void {
-            std.debug.assert(self.data != null);
+            std.debug.assert(self._decoder != null);
             var header_len: usize = undefined;
             const header = try Uint64.decode(raw, &header_len);
 
@@ -471,9 +471,10 @@ pub fn Repeated(comptime T: type) type {
 test "Repeated" {
     const twelve = [_]u8{ 12, 0, 0, 0 };
     const hundred = [_]u8{ 100, 0, 0, 0 };
-    var repeated_field = Repeated(Fixed32).init(std.heap.direct_allocator);
+    var repeated_field = Repeated(Fixed32){};
+    repeated_field.initDecoder(std.heap.direct_allocator);
     var len: usize = undefined;
     try repeated_field.decodeOne(twelve[0..], &len);
     try repeated_field.decodeOne(hundred[0..], &len);
-    testing.expectEqualSlices(u32, [_]u32{ 12, 100 }, repeated_field.data.?.toSlice());
+    testing.expectEqualSlices(u32, [_]u32{ 12, 100 }, repeated_field._decoder.?.toSlice());
 }

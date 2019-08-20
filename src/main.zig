@@ -19,6 +19,8 @@ pub const Bool = types.Bool;
 pub const Bytes = types.Bytes;
 pub const String = types.String;
 
+pub const Repeated = types.Repeated;
+
 const FieldInfo = struct {
     wire_type: types.WireType,
     number: u61,
