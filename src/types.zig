@@ -4,6 +4,7 @@ const testing = std.testing;
 const ParseError = error{
     Overflow,
     EndOfStream,
+    OutOfMemory,
 };
 
 pub const WireType = enum(u3) {
@@ -398,4 +399,81 @@ test "Bool" {
             try testEncodeDecode(Bool, base);
         }
     }
+}
+
+pub fn Repeated(comptime T: type) type {
+    std.debug.assert(@hasField(T, "data"));
+    std.debug.assert(@hasDecl(T, "encodeSize"));
+    std.debug.assert(@hasDecl(T, "encodeInto"));
+    std.debug.assert(@hasDecl(T, "decode"));
+
+    const DataType = std.meta.fieldInfo(T, "data").field_type;
+
+    return struct {
+        const Self = @This();
+        const List = std.ArrayList(DataType);
+
+        data: ?List = null,
+
+        pub fn init(allocator: *std.mem.Allocator) Self {
+            return Self{
+                .data = List.init(allocator),
+            };
+        }
+
+        pub fn encodeSize(self: Self) usize {
+            var sum = usize(0);
+            for (self.data) |item| {
+                const wrapper = DataType{ .data = item };
+                sum += wrapper.encodeSize();
+            }
+            return sum;
+        }
+
+        pub fn encodeInto(self: Self, buffer: []u8) []u8 {
+            var cursor = usize(0);
+            for (self.data) |item| {
+                const wrapper = DataType{ .data = item };
+                const result = wrapper.encodeInto(buffer[cursor..]);
+                cursor += result.len;
+            }
+            return buffer[0..cursor];
+        }
+
+        pub fn decodeOne(self: *Self, raw: []const u8, len: *usize) ParseError!void {
+            std.debug.assert(self.data != null);
+            const base = try T.decode(raw, len);
+            try self.data.?.append(base.data);
+        }
+
+        pub fn decodePacked(self: *Self, raw: []const u8, len: *usize) ParseError!void {
+            std.debug.assert(self.data != null);
+            var header_len: usize = undefined;
+            const header = try Uint64.decode(raw, &header_len);
+
+            var items_len = usize(0);
+            while (items_len < header.data) {
+                var len: usize = undefined;
+                try self.decodeOne(raw[header_len + items_len ..], &len);
+                items_len += len;
+            }
+
+            if (items_len > header.data) {
+                // Header listed length != items actual length
+                return error.Overflow;
+            }
+
+            len.* = header_len + items_len;
+        }
+    };
+}
+
+test "Repeated" {
+    const twelve = [_]u8{ 12, 0, 0, 0 };
+    const hundred = [_]u8{ 100, 0, 0, 0 };
+    var repeated_field = Repeated(Fixed32).init(std.heap.direct_allocator);
+    var len: usize = undefined;
+    try repeated_field.decodeOne(twelve[0..], &len);
+    try repeated_field.decodeOne(hundred[0..], &len);
+    testing.expectEqualSlices(u32, [_]u32{ 12, 100 }, repeated_field.data.?.toSlice());
 }
