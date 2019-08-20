@@ -16,6 +16,22 @@ pub const WireType = enum(u3) {
     _32bit = 5,
 };
 
+const FieldInfo = struct {
+    wire_type: types.WireType,
+    number: u61,
+
+    pub fn init(value: u64) FieldInfo {
+        return FieldInfo{
+            .wire_type = @intToEnum(types.WireType, @truncate(u3, value)),
+            .number = @intCast(u61, value >> 3),
+        };
+    }
+
+    pub fn encodeInto(self: FieldInfo, buffer: []u8) []u8 {
+        const uint = types.Uint64{ .data = (@intCast(u64, self.number) << 3) + @enumToInt(self.wire_type) };
+        return uint.encodeInto(buffer);
+    }
+};
 fn divCeil(comptime T: type, numerator: T, denominator: T) T {
     return (numerator + denominator - 1) / denominator;
 }
@@ -369,34 +385,42 @@ test "Bytes/String" {
     }
 }
 
-pub const Bool = struct {
-    data: bool = false,
+pub fn Bool(comptime number: comptime_int) type {
+    return struct {
+        const Self = @This();
 
-    pub const wire_type = WireType.Varint;
+        data: bool = false,
 
-    pub fn encodeSize(self: Bool) usize {
-        return 1;
-    }
+        pub const field_info = FieldInfo{
+            .wire_type = .Varint,
+            .number = number,
+        };
 
-    pub fn encodeInto(self: Bool, buffer: []u8) []u8 {
-        return (Uint64{ .data = if (self.data) u64(1) else 0 }).encodeInto(buffer);
-    }
-
-    pub fn decode(bytes: []const u8, len: *usize) ParseError!Bool {
-        const source = try Uint64.decode(bytes, len);
-        // TODO: verify that bools *must* be 0 or 1
-        if (source.data > 1) {
-            return error.Overflow;
+        pub fn encodeSize(self: Self) usize {
+            return 1;
         }
-        return Bool{ .data = if (source.data == 0) false else true };
-    }
-};
+
+        pub fn encodeInto(self: Self, buffer: []u8) []u8 {
+            buffer[0] = if (self.data) u8(1) else 0;
+            return buffer[0..1];
+        }
+
+        pub fn decode(bytes: []const u8, len: *usize) ParseError!Self {
+            const source = try Uint64.decode(bytes, len);
+            // TODO: verify that bools *must* be 0 or 1
+            if (source.data > 1) {
+                return error.Overflow;
+            }
+            return Self{ .data = if (source.data == 0) false else true };
+        }
+    };
+}
 
 test "Bool" {
     @"fuzz": {
         inline for ([_]bool{ false, true }) |b| {
-            const base = Bool{ .data = b };
-            try testEncodeDecode(Bool, base);
+            const base = Bool(1){ .data = b };
+            try testEncodeDecode(Bool(1), base);
         }
     }
 }
