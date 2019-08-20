@@ -21,7 +21,7 @@ fn divCeil(comptime T: type, numerator: T, denominator: T) T {
 }
 
 pub const Uint64 = struct {
-    data: u64,
+    data: u64 = 0,
 
     pub const wire_type = WireType.Varint;
 
@@ -67,7 +67,7 @@ pub const Int64 = FromBitcast(i64, Uint64);
 
 fn FromBitcast(comptime TargetPrimitive: type, comptime SourceType: type) type {
     return struct {
-        data: TargetPrimitive,
+        data: TargetPrimitive = 0,
 
         const Self = @This();
 
@@ -91,7 +91,7 @@ fn FromBitcast(comptime TargetPrimitive: type, comptime SourceType: type) type {
 }
 
 pub const Sint64 = struct {
-    data: i64,
+    data: i64 = 0,
 
     pub const wire_type = WireType.Varint;
 
@@ -120,7 +120,7 @@ fn FromIntCast(comptime TargetPrimitive: type, comptime SourceType: type) type {
     return struct {
         const Self = @This();
 
-        data: TargetPrimitive,
+        data: TargetPrimitive = 0,
 
         pub const wire_type = WireType.Varint;
 
@@ -215,7 +215,7 @@ test "Var int" {
 }
 
 pub const Fixed64 = struct {
-    data: u64,
+    data: u64 = 0,
 
     pub const wire_type = WireType._64bit;
 
@@ -236,7 +236,7 @@ pub const Fixed64 = struct {
 };
 
 pub const Fixed32 = struct {
-    data: u32,
+    data: u32 = 0,
 
     pub const wire_type = WireType._32bit;
 
@@ -286,7 +286,7 @@ test "Fixed numbers" {
 }
 
 pub const Bytes = struct {
-    data: []u8,
+    data: []u8 = [_]u8{},
     allocator: ?*std.mem.Allocator = null,
 
     pub const wire_type = WireType.LengthDelimited;
@@ -321,7 +321,7 @@ pub const Bytes = struct {
 };
 
 pub const String = struct {
-    data: []u8,
+    data: []u8 = [_]u8{},
     allocator: ?*std.mem.Allocator = null,
 
     pub const wire_type = WireType.LengthDelimited;
@@ -370,7 +370,7 @@ test "Bytes/String" {
 }
 
 pub const Bool = struct {
-    data: bool,
+    data: bool = false,
 
     pub const wire_type = WireType.Varint;
 
