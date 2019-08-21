@@ -330,7 +330,9 @@ test "Bool" {
     }
 }
 
-pub fn Repeated(comptime T: type) type {
+pub fn Repeated(comptime number: u63, comptime Tfn: var) type {
+    const T = Tfn(number);
+
     std.debug.assert(@hasField(T, "data"));
     std.debug.assert(@hasDecl(T, "encodeSize"));
     std.debug.assert(@hasDecl(T, "encodeInto"));
@@ -400,7 +402,7 @@ pub fn Repeated(comptime T: type) type {
 test "Repeated" {
     const twelve = [_]u8{ 12, 0, 0, 0 };
     const hundred = [_]u8{ 100, 0, 0, 0 };
-    var repeated_field = Repeated(Fixed32(1)){};
+    var repeated_field = Repeated(1, Fixed32){};
     repeated_field.initDecoder(std.heap.direct_allocator);
     var len: usize = undefined;
     try repeated_field.decodeOne(twelve[0..], &len);
