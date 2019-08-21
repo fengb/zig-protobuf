@@ -17,7 +17,7 @@ pub const WireType = enum(u3) {
 };
 
 const FieldInfo = struct {
-    wire_type: types.WireType,
+    wire_type: WireType,
     number: u61,
 
     pub fn init(value: u64) FieldInfo {
@@ -34,6 +34,13 @@ const FieldInfo = struct {
 };
 fn divCeil(comptime T: type, numerator: T, denominator: T) T {
     return (numerator + denominator - 1) / denominator;
+}
+
+pub fn Uint64_(comptime number: comptime_int) type {
+    return FromBitCast_(u64, Uint64Coder, FieldInfo{
+        .wire_type = .Varint,
+        .number = number,
+    });
 }
 
 pub const Uint64 = struct {
@@ -79,9 +86,77 @@ pub const Uint64 = struct {
     }
 };
 
-pub const Int64 = FromBitcast(i64, Uint64);
+const Uint64Coder = struct {
+    const primitive = u64;
 
-fn FromBitcast(comptime TargetPrimitive: type, comptime SourceType: type) type {
+    pub fn encodeSize(data: u64) usize {
+        const bits = u64.bit_count - @clz(u64, data);
+        return std.math.max(divCeil(u64, bits, 7), 1);
+    }
+
+    pub fn encode(buffer: []u8, data: u64) []u8 {
+        if (data == 0) {
+            buffer[0] = 0;
+            return buffer[0..1];
+        }
+        var i = usize(0);
+        var value = data;
+        while (value > 0) : (i += 1) {
+            buffer[i] = u8(0x80) + @truncate(u7, value);
+            value >>= 7;
+        }
+        buffer[i - 1] &= 0x7F;
+        return buffer[0..i];
+    }
+
+    pub fn decode(bytes: []const u8, len: *usize) ParseError!u64 {
+        var value = u64(0);
+
+        for (bytes) |byte, i| {
+            if (i >= 10) {
+                return error.Overflow;
+            }
+            value += @intCast(u64, 0x7F & byte) << (7 * @intCast(u6, i));
+            if (byte & 0x80 == 0) {
+                len.* = i + 1;
+                return value;
+            }
+        }
+        // TODO: stream in bytes
+        return error.EndOfStream;
+    }
+};
+pub fn Int64(comptime number: comptime_int) type {
+    return FromBitCast_(i64, Uint64Coder, FieldInfo{
+        .wire_type = .Varint,
+        .number = number,
+    });
+}
+
+fn FromBitCast_(comptime TargetPrimitive: type, comptime Coder: type, comptime info: FieldInfo) type {
+    return struct {
+        const Self = @This();
+
+        data: TargetPrimitive = 0,
+
+        pub const field_info = info;
+
+        pub fn encodeSize(self: Self) usize {
+            return Coder.encodeSize(@bitCast(Coder.primitive, self.data));
+        }
+
+        pub fn encodeInto(self: Self, buffer: []u8) []u8 {
+            return Coder.encode(buffer, @bitCast(Coder.primitive, self.data));
+        }
+
+        pub fn decode(buffer: []const u8, len: *usize) ParseError!Self {
+            const raw = try Coder.decode(buffer, len);
+            return Self{ .data = @bitCast(TargetPrimitive, raw) };
+        }
+    };
+}
+
+fn FromBitCast(comptime TargetPrimitive: type, comptime SourceType: type) type {
     return struct {
         data: TargetPrimitive = 0,
 
@@ -129,7 +204,7 @@ pub const Sint64 = struct {
 };
 
 pub const Uint32 = FromIntCast(u32, Uint64);
-pub const Int32 = FromIntCast(i32, Int64);
+//pub const Int32 = FromIntCast(i32, Int64);
 pub const Sint32 = FromIntCast(i32, Sint64);
 
 fn FromIntCast(comptime TargetPrimitive: type, comptime SourceType: type) type {
@@ -195,7 +270,7 @@ test "Var int" {
     var buf2: [1000]u8 = undefined;
     testing.expectEqualSlices(
         u8,
-        (Int64{ .data = -1 }).encodeInto(buf1[0..]),
+        (Int64(1){ .data = -1 }).encodeInto(buf1[0..]),
         (Uint64{ .data = std.math.maxInt(u64) }).encodeInto(buf2[0..]),
     );
 
@@ -218,7 +293,8 @@ test "Var int" {
     );
 
     @"fuzz": {
-        inline for ([_]type{ Uint64, Int64, Sint64, Uint32, Int32, Sint32 }) |T| {
+        //inline for ([_]type{ Uint64, Int64(1), Sint64, Uint32, Int32, Sint32 }) |T| {
+        inline for ([_]type{ Uint64_(1), Int64(1), Sint64, Uint32, Sint32 }) |T| {
             const data_field = std.meta.fieldInfo(T, "data");
 
             var i = usize(0);
@@ -272,10 +348,10 @@ pub const Fixed32 = struct {
     }
 };
 
-pub const Sfixed64 = FromBitcast(i64, Fixed64);
-pub const Sfixed32 = FromBitcast(i32, Fixed32);
-pub const Double = FromBitcast(f64, Fixed64);
-pub const Float = FromBitcast(f32, Fixed32);
+pub const Sfixed64 = FromBitCast(i64, Fixed64);
+pub const Sfixed32 = FromBitCast(i32, Fixed32);
+pub const Double = FromBitCast(f64, Fixed64);
+pub const Float = FromBitCast(f32, Fixed32);
 
 test "Fixed numbers" {
     @"fuzz": {
