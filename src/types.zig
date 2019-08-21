@@ -7,7 +7,7 @@ const ParseError = error{
     OutOfMemory,
 };
 
-pub const WireType = enum(u3) {
+const WireType = enum(u3) {
     Varint = 0,
     _64bit = 1,
     LengthDelimited = 2,
@@ -22,69 +22,68 @@ const FieldInfo = struct {
 
     pub fn init(value: u64) FieldInfo {
         return FieldInfo{
-            .wire_type = @intToEnum(types.WireType, @truncate(u3, value)),
+            .wire_type = @intToEnum(WireType, @truncate(u3, value)),
             .number = @intCast(u61, value >> 3),
         };
     }
 
     pub fn encodeInto(self: FieldInfo, buffer: []u8) []u8 {
-        const uint = types.Uint64{ .data = (@intCast(u64, self.number) << 3) + @enumToInt(self.wire_type) };
-        return uint.encodeInto(buffer);
+        const uint = (@intCast(u64, self.number) << 3) + @enumToInt(self.wire_type);
+        return Uint64Coder.encode(buffer, uint);
     }
 };
+
+test "FieldInfo" {
+    const field = FieldInfo.init(8);
+    testing.expectEqual(WireType.Varint, field.wire_type);
+    testing.expectEqual(u61(1), field.number);
+}
+
 fn divCeil(comptime T: type, numerator: T, denominator: T) T {
     return (numerator + denominator - 1) / denominator;
 }
 
-pub fn Uint64_(comptime number: comptime_int) type {
-    return FromBitCast_(u64, Uint64Coder, FieldInfo{
+pub fn Uint64(comptime number: comptime_int) type {
+    return FromVarintCast(u64, Uint64Coder, FieldInfo{
         .wire_type = .Varint,
         .number = number,
     });
 }
 
-pub const Uint64 = struct {
-    data: u64 = 0,
+pub fn Uint32(comptime number: comptime_int) type {
+    return FromVarintCast(u32, Uint64Coder, FieldInfo{
+        .wire_type = .Varint,
+        .number = number,
+    });
+}
 
-    pub const wire_type = WireType.Varint;
+pub fn Int64(comptime number: comptime_int) type {
+    return FromVarintCast(i64, Int64Coder, FieldInfo{
+        .wire_type = .Varint,
+        .number = number,
+    });
+}
 
-    pub fn encodeSize(self: Uint64) usize {
-        const bits = u64.bit_count - @clz(u64, self.data);
-        return std.math.max(divCeil(u64, bits, 7), 1);
-    }
+pub fn Int32(comptime number: comptime_int) type {
+    return FromVarintCast(i32, Int64Coder, FieldInfo{
+        .wire_type = .Varint,
+        .number = number,
+    });
+}
 
-    pub fn encodeInto(self: Uint64, buffer: []u8) []u8 {
-        if (self.data == 0) {
-            buffer[0] = 0;
-            return buffer[0..1];
-        }
-        var i = usize(0);
-        var value = self.data;
-        while (value > 0) : (i += 1) {
-            buffer[i] = u8(0x80) + @truncate(u7, value);
-            value >>= 7;
-        }
-        buffer[i - 1] &= 0x7F;
-        return buffer[0..i];
-    }
+pub fn Sint64(comptime number: comptime_int) type {
+    return FromVarintCast(i64, Sint64Coder, FieldInfo{
+        .wire_type = .Varint,
+        .number = number,
+    });
+}
 
-    pub fn decode(bytes: []const u8, len: *usize) ParseError!Uint64 {
-        var value = u64(0);
-
-        for (bytes) |byte, i| {
-            if (i >= 10) {
-                return error.Overflow;
-            }
-            value += @intCast(u64, 0x7F & byte) << (7 * @intCast(u6, i));
-            if (byte & 0x80 == 0) {
-                len.* = i + 1;
-                return Uint64{ .data = value };
-            }
-        }
-        // TODO: stream in bytes
-        return error.EndOfStream;
-    }
-};
+pub fn Sint32(comptime number: comptime_int) type {
+    return FromVarintCast(i32, Sint64Coder, FieldInfo{
+        .wire_type = .Varint,
+        .number = number,
+    });
+}
 
 const Uint64Coder = struct {
     const primitive = u64;
@@ -127,12 +126,39 @@ const Uint64Coder = struct {
     }
 };
 
-pub fn Int64(comptime number: comptime_int) type {
-    return FromBitCast_(i64, Uint64Coder, FieldInfo{
-        .wire_type = .Varint,
-        .number = number,
-    });
-}
+pub const Int64Coder = struct {
+    const primitive = i64;
+
+    pub fn encodeSize(data: i64) usize {
+        return Uint64Coder.encodeSize(@bitCast(u64, data));
+    }
+
+    pub fn encode(buffer: []u8, data: i64) []u8 {
+        return Uint64Coder.encode(buffer, @bitCast(u64, data));
+    }
+
+    pub fn decode(bytes: []const u8, len: *usize) ParseError!i64 {
+        return @bitCast(i64, try Uint64Coder.decode(bytes, len));
+    }
+};
+
+pub const Sint64Coder = struct {
+    const primitive = i64;
+
+    pub fn encodeSize(data: i64) usize {
+        return Uint64Coder.encodeSize(@bitCast(u64, (data << 1) ^ (data >> 63)));
+    }
+
+    pub fn encode(buffer: []u8, data: i64) []u8 {
+        return Uint64Coder.encode(buffer, @bitCast(u64, (data << 1) ^ (data >> 63)));
+    }
+
+    pub fn decode(bytes: []const u8, len: *usize) ParseError!i64 {
+        const source = try Uint64Coder.decode(bytes, len);
+        const raw = @bitCast(i64, source >> 1);
+        return if (@mod(source, 2) == 0) raw else -(raw + 1);
+    }
+};
 
 fn FromBitCast_(comptime TargetPrimitive: type, comptime Coder: type, comptime info: FieldInfo) type {
     return struct {
@@ -157,77 +183,25 @@ fn FromBitCast_(comptime TargetPrimitive: type, comptime Coder: type, comptime i
     };
 }
 
-fn FromBitCast(comptime TargetPrimitive: type, comptime SourceType: type) type {
-    return struct {
-        data: TargetPrimitive = 0,
-
-        const Self = @This();
-
-        pub const wire_type = WireType.Varint;
-
-        pub fn encodeSize(self: Self) usize {
-            const source = SourceType{ .data = @bitCast(TargetPrimitive, self.data) };
-            return source.encodeSize();
-        }
-
-        pub fn encodeInto(self: Self, buffer: []u8) []u8 {
-            const source = SourceType{ .data = @bitCast(TargetPrimitive, self.data) };
-            return source.encodeInto(buffer);
-        }
-
-        pub fn decode(bytes: []const u8, len: *usize) ParseError!Self {
-            const source = try SourceType.decode(bytes, len);
-            return Self{ .data = @bitCast(TargetPrimitive, source.data) };
-        }
-    };
-}
-
-pub const Sint64 = struct {
-    data: i64 = 0,
-
-    pub const wire_type = WireType.Varint;
-
-    pub fn encodeSize(self: Sint64) usize {
-        const source = Uint64{ .data = @bitCast(u64, (self.data << 1) ^ (self.data >> 63)) };
-        return source.encodeSize();
-    }
-
-    pub fn encodeInto(self: Sint64, buffer: []u8) []u8 {
-        const source = Uint64{ .data = @bitCast(u64, (self.data << 1) ^ (self.data >> 63)) };
-        return source.encodeInto(buffer);
-    }
-
-    pub fn decode(bytes: []const u8, len: *usize) ParseError!Sint64 {
-        const source = try Uint64.decode(bytes, len);
-        const raw = @bitCast(i64, source.data >> 1);
-        return Sint64{ .data = if (@mod(source.data, 2) == 0) raw else -(raw + 1) };
-    }
-};
-
-pub const Uint32 = FromIntCast(u32, Uint64);
-//pub const Int32 = FromIntCast(i32, Int64);
-pub const Sint32 = FromIntCast(i32, Sint64);
-
-fn FromIntCast(comptime TargetPrimitive: type, comptime SourceType: type) type {
+fn FromVarintCast(comptime TargetPrimitive: type, comptime Coder: type, comptime info: FieldInfo) type {
     return struct {
         const Self = @This();
 
         data: TargetPrimitive = 0,
 
-        pub const wire_type = WireType.Varint;
+        pub const field_info = info;
 
         pub fn encodeSize(self: Self) usize {
-            const source = SourceType{ .data = self.data };
-            return source.encodeSize();
+            return Coder.encodeSize(self.data);
         }
 
         pub fn encodeInto(self: Self, buffer: []u8) []u8 {
-            return (SourceType{ .data = self.data }).encodeInto(buffer);
+            return Coder.encode(buffer, self.data);
         }
 
         pub fn decode(bytes: []const u8, len: *usize) ParseError!Self {
-            const source = try SourceType.decode(bytes, len);
-            return Self{ .data = @intCast(TargetPrimitive, source.data) };
+            const raw = try Coder.decode(bytes, len);
+            return Self{ .data = @intCast(TargetPrimitive, raw) };
         }
     };
 }
@@ -258,44 +232,44 @@ fn testEncodeDecodeSlices(comptime T: type, base: T) !void {
 test "Var int" {
     var len: usize = 0;
 
-    var uint = try Uint64.decode([_]u8{1}, &len);
-    testing.expectEqual(u64(1), uint.data);
+    var uint = try Uint64Coder.decode([_]u8{1}, &len);
+    testing.expectEqual(u64(1), uint);
 
-    uint = try Uint64.decode([_]u8{ 0b10101100, 0b00000010 }, &len);
-    testing.expectEqual(u64(300), uint.data);
+    uint = try Uint64Coder.decode([_]u8{ 0b10101100, 0b00000010 }, &len);
+    testing.expectEqual(u64(300), uint);
 
-    uint = try Uint64.decode([_]u8{ 0b10010110, 0b00000001 }, &len);
-    testing.expectEqual(u64(150), uint.data);
+    uint = try Uint64Coder.decode([_]u8{ 0b10010110, 0b00000001 }, &len);
+    testing.expectEqual(u64(150), uint);
 
     var buf1: [1000]u8 = undefined;
     var buf2: [1000]u8 = undefined;
     testing.expectEqualSlices(
         u8,
         (Int64(1){ .data = -1 }).encodeInto(buf1[0..]),
-        (Uint64{ .data = std.math.maxInt(u64) }).encodeInto(buf2[0..]),
+        (Uint64(1){ .data = std.math.maxInt(u64) }).encodeInto(buf2[0..]),
     );
 
     testing.expectEqualSlices(
         u8,
-        (Sint64{ .data = -1 }).encodeInto(buf1[0..]),
-        (Uint64{ .data = 1 }).encodeInto(buf2[0..]),
+        (Sint64(1){ .data = -1 }).encodeInto(buf1[0..]),
+        (Uint64(1){ .data = 1 }).encodeInto(buf2[0..]),
     );
 
     testing.expectEqualSlices(
         u8,
-        (Sint64{ .data = 2147483647 }).encodeInto(buf1[0..]),
-        (Uint64{ .data = 4294967294 }).encodeInto(buf2[0..]),
+        (Sint64(1){ .data = 2147483647 }).encodeInto(buf1[0..]),
+        (Uint64(1){ .data = 4294967294 }).encodeInto(buf2[0..]),
     );
 
     testing.expectEqualSlices(
         u8,
-        (Sint64{ .data = -2147483648 }).encodeInto(buf1[0..]),
-        (Uint64{ .data = 4294967295 }).encodeInto(buf2[0..]),
+        (Sint64(1){ .data = -2147483648 }).encodeInto(buf1[0..]),
+        (Uint64(1){ .data = 4294967295 }).encodeInto(buf2[0..]),
     );
 
     @"fuzz": {
         //inline for ([_]type{ Uint64, Int64(1), Sint64, Uint32, Int32, Sint32 }) |T| {
-        inline for ([_]type{ Uint64_(1), Int64(1), Sint64, Uint32, Sint32 }) |T| {
+        inline for ([_]type{ Uint64(1), Int64(1), Sint64(1), Uint32(1), Int32(1), Sint32(1) }) |T| {
             const data_field = std.meta.fieldInfo(T, "data");
 
             var i = usize(0);
@@ -467,12 +441,12 @@ pub fn String(comptime number: comptime_int) type {
 
 const BytesCoder = struct {
     pub fn encodeSize(data: []u8) usize {
-        const header_size = (Uint64{ .data = data.len }).encodeSize();
+        const header_size = Uint64Coder.encodeSize(data.len);
         return header_size + data.len;
     }
 
     pub fn encode(buffer: []u8, data: []u8) []u8 {
-        const header = (Uint64{ .data = data.len }).encodeInto(buffer);
+        const header = Uint64Coder.encode(buffer, data.len);
         // TODO: use a generator instead of buffer overflow
         std.mem.copy(u8, buffer[header.len..], data);
         return buffer[0 .. header.len + data.len];
@@ -480,9 +454,9 @@ const BytesCoder = struct {
 
     pub fn decode(buffer: []const u8, len: *usize, allocator: *std.mem.Allocator) ![]u8 {
         var header_len: usize = undefined;
-        const header = try Uint64.decode(buffer, &header_len);
+        const header = try Uint64Coder.decode(buffer, &header_len);
 
-        var data = try allocator.alloc(u8, header.data);
+        var data = try allocator.alloc(u8, header);
         errdefer allocator.free(data);
 
         std.mem.copy(u8, data, buffer[header_len .. header_len + data.len]);
@@ -538,12 +512,12 @@ pub fn Bool(comptime number: comptime_int) type {
         }
 
         pub fn decode(bytes: []const u8, len: *usize) ParseError!Self {
-            const source = try Uint64.decode(bytes, len);
+            const raw = try Uint64Coder.decode(bytes, len);
             // TODO: verify that bools *must* be 0 or 1
-            if (source.data > 1) {
+            if (raw > 1) {
                 return error.Overflow;
             }
-            return Self{ .data = if (source.data == 0) false else true };
+            return Self{ .data = if (raw == 0) false else true };
         }
     };
 }
