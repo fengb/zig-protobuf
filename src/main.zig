@@ -102,7 +102,7 @@ pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !
             switch (@typeInfo(field.field_type)) {
                 .Struct => {
                     if (info.number == field.field_type.field_info.number) {
-                        @field(result, field.name) = try field.field_type.decode(bytes[cursor..], &len);
+                        try @field(result, field.name).decodeFrom(bytes[cursor..], &len);
                         cursor += len;
                         break;
                     }
