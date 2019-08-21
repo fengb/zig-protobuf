@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const testing = std.testing;
 
 const types = @import("types.zig");
@@ -89,7 +90,7 @@ pub fn marshal(comptime T: type, allocator: *std.mem.Allocator, item: T) ![]u8 {
 }
 
 pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !T {
-    var result: T = undefined;
+    var result = init(T);
 
     var cursor = usize(0);
     while (cursor < bytes.len) {
@@ -115,14 +116,34 @@ pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !
     return result;
 }
 
+pub fn init(comptime T: type) T {
+    var result: T = undefined;
+    inline for (@typeInfo(T).Struct.fields) |field, i| {
+        switch (@typeInfo(field.field_type)) {
+            .Struct => {
+                @field(result, field.name).data = field.field_type.default;
+            },
+            else => {
+                std.debug.warn("{} - not a struct\n", field.name);
+            },
+        }
+    }
+    return result;
+}
+
 test "marshalling" {
     const Example = struct {
         sint: types.Sint64(1),
+        boo: types.Bool(10),
     };
 
-    const start = Example{
-        .sint = types.Sint64(1){ .data = 17 },
-    };
+    var start = init(Example);
+    testing.expectEqual(i64(0), start.sint.data);
+    testing.expectEqual(false, start.boo.data);
+
+    start.sint.data = -17;
+    start.boo.data = true;
+
     const binary = try marshal(Example, std.heap.direct_allocator, start);
     const result = try unmarshal(Example, std.heap.direct_allocator, binary);
     testing.expectEqual(start.sint, result.sint);
