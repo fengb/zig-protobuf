@@ -13,7 +13,7 @@ const WireType = enum(u3) {
     _32bit = 5,
 };
 
-const FieldInfo = struct {
+pub const FieldInfo = struct {
     wire_type: WireType,
     number: u61,
 
@@ -27,6 +27,11 @@ const FieldInfo = struct {
     pub fn encodeInto(self: FieldInfo, buffer: []u8) []u8 {
         const uint = (@intCast(u64, self.number) << 3) + @enumToInt(self.wire_type);
         return coder.Uint64Coder.encode(buffer, uint);
+    }
+
+    pub fn decode(buffer: []const u8, len: *usize) ParseError!FieldInfo {
+        const raw = try coder.Uint64Coder.decode(buffer, len);
+        return init(raw);
     }
 };
 

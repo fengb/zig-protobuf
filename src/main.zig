@@ -81,18 +81,38 @@ pub fn marshal(comptime T: type, allocator: *std.mem.Allocator, item: T) ![]u8 {
 
     var stream = StreamingMarshal(T).init(item);
 
-    std.debug.warn("\n");
     while (stream.next()) |data| {
-        std.debug.warn("0x{x} ", data);
         try buffer.appendSlice(data);
     }
-    std.debug.warn("\n");
 
     return buffer.toOwnedSlice();
 }
 
-pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) T {
-    return T{};
+pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !T {
+    var result: T = undefined;
+
+    var cursor = usize(0);
+    while (cursor < bytes.len) {
+        var len: usize = undefined;
+        const info = try types.FieldInfo.decode(bytes[cursor..], &len);
+        cursor += len;
+
+        inline for (@typeInfo(T).Struct.fields) |field, i| {
+            switch (@typeInfo(field.field_type)) {
+                .Struct => {
+                    if (info.number == field.field_type.field_info.number) {
+                        @field(result, field.name) = try field.field_type.decode(bytes[cursor..], &len);
+                        cursor += len;
+                        break;
+                    }
+                },
+                else => {
+                    std.debug.warn("{} - not a struct\n", field.name);
+                },
+            }
+        }
+    }
+    return result;
 }
 
 test "marshalling" {
@@ -104,9 +124,6 @@ test "marshalling" {
         .sint = types.Sint64(1){ .data = 17 },
     };
     const binary = try marshal(Example, std.heap.direct_allocator, start);
-    //const result = unmarshal(Example, std.heap.direct_allocator, binary);
-
-    //testing.expectEqualSlices(u8, start.label, result.label);
-    //testing.expectEqual(start.@"type", result.@"type");
-    //testing.expectEqualSlices(i64, start.reps, result.reps);
+    const result = try unmarshal(Example, std.heap.direct_allocator, binary);
+    testing.expectEqual(start.sint, result.sint);
 }
