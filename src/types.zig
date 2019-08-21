@@ -126,6 +126,7 @@ const Uint64Coder = struct {
         return error.EndOfStream;
     }
 };
+
 pub fn Int64(comptime number: comptime_int) type {
     return FromBitCast_(i64, Uint64Coder, FieldInfo{
         .wire_type = .Varint,
@@ -306,56 +307,84 @@ test "Var int" {
     }
 }
 
-pub const Fixed64 = struct {
-    data: u64 = 0,
+pub fn Fixed64(comptime number: comptime_int) type {
+    return FromBitCast_(u64, Fixed64Coder, FieldInfo{
+        .wire_type = ._64bit,
+        .number = number,
+    });
+}
+pub fn Sfixed64(comptime number: comptime_int) type {
+    return FromBitCast_(i64, Fixed64Coder, FieldInfo{
+        .wire_type = ._64bit,
+        .number = number,
+    });
+}
+pub fn Fixed32(comptime number: comptime_int) type {
+    return FromBitCast_(u32, Fixed32Coder, FieldInfo{
+        .wire_type = ._32bit,
+        .number = number,
+    });
+}
+pub fn Sfixed32(comptime number: comptime_int) type {
+    return FromBitCast_(i32, Fixed32Coder, FieldInfo{
+        .wire_type = ._32bit,
+        .number = number,
+    });
+}
+pub fn Double(comptime number: comptime_int) type {
+    return FromBitCast_(f64, Fixed64Coder, FieldInfo{
+        .wire_type = ._64bit,
+        .number = number,
+    });
+}
+pub fn Float(comptime number: comptime_int) type {
+    return FromBitCast_(f32, Fixed32Coder, FieldInfo{
+        .wire_type = ._32bit,
+        .number = number,
+    });
+}
 
-    pub const wire_type = WireType._64bit;
+const Fixed64Coder = struct {
+    const primitive = u64;
 
-    pub fn encodeSize(self: Fixed64) usize {
+    pub fn encodeSize(data: u64) usize {
         return 8;
     }
 
-    pub fn encodeInto(self: Fixed64, buffer: []u8) []u8 {
-        var result = buffer[0..self.encodeSize()];
-        std.mem.writeIntSliceLittle(u64, result, self.data);
+    pub fn encode(buffer: []u8, data: u64) []u8 {
+        var result = buffer[0..encodeSize(data)];
+        std.mem.writeIntSliceLittle(u64, result, data);
         return result;
     }
 
-    pub fn decode(bytes: []const u8, len: *usize) ParseError!Fixed64 {
+    pub fn decode(bytes: []const u8, len: *usize) ParseError!u64 {
         len.* = 8;
-        return Fixed64{ .data = std.mem.readIntSliceLittle(u64, bytes) };
+        return std.mem.readIntSliceLittle(u64, bytes);
     }
 };
 
-pub const Fixed32 = struct {
-    data: u32 = 0,
+const Fixed32Coder = struct {
+    const primitive = u32;
 
-    pub const wire_type = WireType._32bit;
-
-    pub fn encodeSize(self: Fixed32) usize {
+    pub fn encodeSize(data: u32) usize {
         return 4;
     }
 
-    pub fn encodeInto(self: Fixed32, buffer: []u8) []u8 {
-        var result = buffer[0..self.encodeSize()];
-        std.mem.writeIntSliceLittle(u32, result, self.data);
+    pub fn encode(buffer: []u8, data: u32) []u8 {
+        var result = buffer[0..encodeSize(data)];
+        std.mem.writeIntSliceLittle(u32, result, data);
         return result;
     }
 
-    pub fn decode(bytes: []const u8, len: *usize) ParseError!Fixed32 {
+    pub fn decode(bytes: []const u8, len: *usize) ParseError!u32 {
         len.* = 4;
-        return Fixed32{ .data = std.mem.readIntSliceLittle(u32, bytes) };
+        return std.mem.readIntSliceLittle(u32, bytes);
     }
 };
 
-pub const Sfixed64 = FromBitCast(i64, Fixed64);
-pub const Sfixed32 = FromBitCast(i32, Fixed32);
-pub const Double = FromBitCast(f64, Fixed64);
-pub const Float = FromBitCast(f32, Fixed32);
-
 test "Fixed numbers" {
     @"fuzz": {
-        inline for ([_]type{ Fixed64, Fixed32, Sfixed64, Sfixed32 }) |T| {
+        inline for ([_]type{ Fixed64(1), Fixed32(1), Sfixed64(1), Sfixed32(1) }) |T| {
             const data_field = std.meta.fieldInfo(T, "data");
 
             var i = usize(0);
@@ -365,7 +394,7 @@ test "Fixed numbers" {
             }
         }
 
-        inline for ([_]type{ Double, Float }) |T| {
+        inline for ([_]type{ Double(1), Float(1) }) |T| {
             const data_field = std.meta.fieldInfo(T, "data");
 
             var i = usize(0);
@@ -598,7 +627,7 @@ pub fn Repeated(comptime T: type) type {
 test "Repeated" {
     const twelve = [_]u8{ 12, 0, 0, 0 };
     const hundred = [_]u8{ 100, 0, 0, 0 };
-    var repeated_field = Repeated(Fixed32){};
+    var repeated_field = Repeated(Fixed32(1)){};
     repeated_field.initDecoder(std.heap.direct_allocator);
     var len: usize = undefined;
     try repeated_field.decodeOne(twelve[0..], &len);
