@@ -301,62 +301,89 @@ test "Fixed numbers" {
     }
 }
 
-pub const Bytes = struct {
-    data: []u8 = [_]u8{},
-    allocator: ?*std.mem.Allocator = null,
+pub fn Bytes(comptime number: comptime_int) type {
+    return struct {
+        const Self = @This();
 
-    pub const wire_type = WireType.LengthDelimited;
+        data: []u8 = [_]u8{},
+        allocator: ?*std.mem.Allocator = null,
 
-    pub fn encodeSize(self: Bytes) usize {
-        const header_size = (Uint64{ .data = self.data.len }).encodeSize();
-        return header_size + self.data.len;
+        pub const field_info = FieldInfo{
+            .wire_type = .LengthDelimited,
+            .number = number,
+        };
+
+        pub fn encodeSize(self: Self) usize {
+            return BytesCoder.encodeSize(self.data);
+        }
+
+        pub fn encodeInto(self: Self, buffer: []u8) []u8 {
+            return BytesCoder.encode(buffer, self.data);
+        }
+
+        pub fn decode(buffer: []const u8, len: *usize, allocator: *std.mem.Allocator) !Self {
+            return Self{
+                .data = try BytesCoder.decode(buffer, len, allocator),
+                .allocator = allocator,
+            };
+        }
+    };
+}
+
+pub fn String(comptime number: comptime_int) type {
+    return struct {
+        const Self = @This();
+
+        data: []u8 = [_]u8{},
+        allocator: ?*std.mem.Allocator = null,
+
+        pub const field_info = FieldInfo{
+            .wire_type = .LengthDelimited,
+            .number = number,
+        };
+
+        pub fn encodeSize(self: Self) usize {
+            return BytesCoder.encodeSize(self.data);
+        }
+
+        pub fn encodeInto(self: Self, buffer: []u8) []u8 {
+            return BytesCoder.encode(buffer, self.data);
+        }
+
+        pub fn decode(buffer: []const u8, len: *usize, allocator: *std.mem.Allocator) !Self {
+            // TODO: validate unicode
+            return Self{
+                .data = try BytesCoder.decode(buffer, len, allocator),
+                .allocator = allocator,
+            };
+        }
+    };
+}
+
+const BytesCoder = struct {
+    pub fn encodeSize(data: []u8) usize {
+        const header_size = (Uint64{ .data = data.len }).encodeSize();
+        return header_size + data.len;
     }
 
-    pub fn encodeInto(self: Bytes, buffer: []u8) []u8 {
-        const header = (Uint64{ .data = self.data.len }).encodeInto(buffer);
+    pub fn encode(buffer: []u8, data: []u8) []u8 {
+        const header = (Uint64{ .data = data.len }).encodeInto(buffer);
         // TODO: use a generator instead of buffer overflow
-        std.mem.copy(u8, buffer[header.len..], self.data);
-        return buffer[0 .. header.len + self.data.len];
+        std.mem.copy(u8, buffer[header.len..], data);
+        return buffer[0 .. header.len + data.len];
     }
 
-    pub fn decode(raw: []const u8, len: *usize, allocator: *std.mem.Allocator) !Bytes {
+    pub fn decode(buffer: []const u8, len: *usize, allocator: *std.mem.Allocator) ![]u8 {
         var header_len: usize = undefined;
-        const header = try Uint64.decode(raw, &header_len);
+        const header = try Uint64.decode(buffer, &header_len);
 
         var data = try allocator.alloc(u8, header.data);
         errdefer allocator.free(data);
 
-        std.mem.copy(u8, data, raw[header_len .. header_len + data.len]);
+        std.mem.copy(u8, data, buffer[header_len .. header_len + data.len]);
         len.* = header_len + data.len;
 
-        return Bytes{
-            .data = data,
-            .allocator = allocator,
-        };
-    }
-};
-
-pub const String = struct {
-    data: []u8 = [_]u8{},
-    allocator: ?*std.mem.Allocator = null,
-
-    pub const wire_type = WireType.LengthDelimited;
-
-    pub fn encodeSize(self: String) usize {
-        return (Bytes{ .data = self.data }).encodeSize();
-    }
-
-    pub fn encodeInto(self: String, buffer: []u8) []u8 {
-        return (Bytes{ .data = self.data }).encodeInto(buffer);
-    }
-
-    pub fn decode(raw: []const u8, len: *usize, allocator: *std.mem.Allocator) !Bytes {
-        var bytes = try Bytes.decode(raw, len, allocator);
-        // TODO: validate unicode
-        return String{
-            .data = bytes.data,
-            .allocator = bytes.allocator,
-        };
+        return data;
     }
 };
 
@@ -364,7 +391,7 @@ test "Bytes/String" {
     var buffer: [1000]u8 = undefined;
     var raw = "testing";
 
-    var bytes = Bytes{ .data = raw[0..] };
+    var bytes = Bytes(1){ .data = raw[0..] };
     testing.expectEqualSlices(
         u8,
         [_]u8{ 0x07, 0x74, 0x65, 0x73, 0x74, 0x69, 0x6e, 0x67 },
@@ -372,7 +399,7 @@ test "Bytes/String" {
     );
 
     @"fuzz": {
-        inline for ([_]type{ Bytes, String }) |T| {
+        inline for ([_]type{ Bytes(1), String(1) }) |T| {
             var i = usize(0);
             while (i < 100) : (i += 1) {
                 var base_buf: [500]u8 = undefined;
