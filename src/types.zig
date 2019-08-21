@@ -36,42 +36,42 @@ test "FieldInfo" {
     testing.expectEqual(u61(1), field.number);
 }
 
-pub fn Uint64(comptime number: comptime_int) type {
+pub fn Uint64(comptime number: u63) type {
     return FromVarintCast(u64, coder.Uint64Coder, FieldInfo{
         .wire_type = .Varint,
         .number = number,
     });
 }
 
-pub fn Uint32(comptime number: comptime_int) type {
+pub fn Uint32(comptime number: u63) type {
     return FromVarintCast(u32, coder.Uint64Coder, FieldInfo{
         .wire_type = .Varint,
         .number = number,
     });
 }
 
-pub fn Int64(comptime number: comptime_int) type {
+pub fn Int64(comptime number: u63) type {
     return FromVarintCast(i64, coder.Int64Coder, FieldInfo{
         .wire_type = .Varint,
         .number = number,
     });
 }
 
-pub fn Int32(comptime number: comptime_int) type {
+pub fn Int32(comptime number: u63) type {
     return FromVarintCast(i32, coder.Int64Coder, FieldInfo{
         .wire_type = .Varint,
         .number = number,
     });
 }
 
-pub fn Sint64(comptime number: comptime_int) type {
+pub fn Sint64(comptime number: u63) type {
     return FromVarintCast(i64, coder.Sint64Coder, FieldInfo{
         .wire_type = .Varint,
         .number = number,
     });
 }
 
-pub fn Sint32(comptime number: comptime_int) type {
+pub fn Sint32(comptime number: u63) type {
     return FromVarintCast(i32, coder.Sint64Coder, FieldInfo{
         .wire_type = .Varint,
         .number = number,
@@ -159,37 +159,37 @@ test "Var int" {
     }
 }
 
-pub fn Fixed64(comptime number: comptime_int) type {
+pub fn Fixed64(comptime number: u63) type {
     return FromBitCast(u64, coder.Fixed64Coder, FieldInfo{
         .wire_type = ._64bit,
         .number = number,
     });
 }
-pub fn Sfixed64(comptime number: comptime_int) type {
+pub fn Sfixed64(comptime number: u63) type {
     return FromBitCast(i64, coder.Fixed64Coder, FieldInfo{
         .wire_type = ._64bit,
         .number = number,
     });
 }
-pub fn Fixed32(comptime number: comptime_int) type {
+pub fn Fixed32(comptime number: u63) type {
     return FromBitCast(u32, coder.Fixed32Coder, FieldInfo{
         .wire_type = ._32bit,
         .number = number,
     });
 }
-pub fn Sfixed32(comptime number: comptime_int) type {
+pub fn Sfixed32(comptime number: u63) type {
     return FromBitCast(i32, coder.Fixed32Coder, FieldInfo{
         .wire_type = ._32bit,
         .number = number,
     });
 }
-pub fn Double(comptime number: comptime_int) type {
+pub fn Double(comptime number: u63) type {
     return FromBitCast(f64, coder.Fixed64Coder, FieldInfo{
         .wire_type = ._64bit,
         .number = number,
     });
 }
-pub fn Float(comptime number: comptime_int) type {
+pub fn Float(comptime number: u63) type {
     return FromBitCast(f32, coder.Fixed32Coder, FieldInfo{
         .wire_type = ._32bit,
         .number = number,
@@ -218,7 +218,7 @@ test "Fixed numbers" {
     }
 }
 
-pub fn Bytes(comptime number: comptime_int) type {
+pub fn Bytes(comptime number: u63) type {
     return struct {
         const Self = @This();
 
@@ -247,7 +247,7 @@ pub fn Bytes(comptime number: comptime_int) type {
     };
 }
 
-pub fn String(comptime number: comptime_int) type {
+pub fn String(comptime number: u63) type {
     return struct {
         const Self = @This();
 
@@ -290,7 +290,7 @@ test "Bytes/String" {
     }
 }
 
-pub fn Bool(comptime number: comptime_int) type {
+pub fn Bool(comptime number: u63) type {
     return struct {
         const Self = @This();
 
