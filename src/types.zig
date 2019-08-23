@@ -252,6 +252,7 @@ pub fn Bytes(comptime number: u63) type {
 
         pub fn decodeFrom(self: *Self, buffer: []const u8, len: *usize, allocator: *std.mem.Allocator) ParseError!void {
             self.data = try coder.BytesCoder.decode(buffer, len, allocator);
+            self.allocator = allocator;
         }
     };
 }
@@ -280,6 +281,7 @@ pub fn String(comptime number: u63) type {
         pub fn decodeFrom(self: *Self, buffer: []const u8, len: *usize, allocator: *std.mem.Allocator) ParseError!void {
             // TODO: validate unicode
             self.data = try coder.BytesCoder.decode(buffer, len, allocator);
+            self.allocator = allocator;
         }
     };
 }
