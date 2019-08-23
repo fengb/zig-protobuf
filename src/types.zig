@@ -361,14 +361,18 @@ pub fn Repeated(comptime number: u63, comptime Tfn: var) type {
 
     return struct {
         const Self = @This();
+        const List = std.ArrayList(DataType);
 
         data: []DataType = [_]DataType{},
         allocator: ?*std.mem.Allocator = null,
-        _decoder: ?std.ArrayList(DataType) = null,
+        _decode_builder: ?List = null,
 
-        fn initDecoder(self: *Self, allocator: *std.mem.Allocator) void {
-            std.debug.assert(self.data.len == 0);
-            self._decoder = std.ArrayList(DataType).init(allocator);
+        pub fn deinit(self: *Self) void {
+            std.debug.assert(self._decode_builder == null);
+            if (self.allocator) |alloc| {
+                alloc.free(self.data);
+                self.* = Self{};
+            }
         }
 
         pub fn encodeSize(self: Self) usize {
@@ -390,22 +394,26 @@ pub fn Repeated(comptime number: u63, comptime Tfn: var) type {
             return buffer[0..cursor];
         }
 
-        pub fn decodeFromAlloc(self: *Self, raw: []const u8, len: *usize) ParseError!void {
-            std.debug.assert(self._decoder != null);
+        pub fn decodeFromAlloc(self: *Self, raw: []const u8, len: *usize, allocator: *std.mem.Allocator) ParseError!void {
+            if (self._decode_builder == null) {
+                self.deinit();
+                self._decode_builder = List.init(allocator);
+            }
+            std.debug.assert(self._decode_builder != null);
             var base: T = undefined;
             try base.decodeFrom(raw, len);
-            try self._decoder.?.append(base.data);
+            try self._decode_builder.?.append(base.data);
         }
 
-        pub fn decodePacked(self: *Self, raw: []const u8, len: *usize) ParseError!void {
-            std.debug.assert(self._decoder != null);
+        pub fn decodePacked(self: *Self, raw: []const u8, len: *usize, allocator: *std.mem.Allocator) ParseError!void {
+            std.debug.assert(self._decode_builder != null);
             var header_len: usize = undefined;
             const header = try Uint64.decode(raw, &header_len);
 
             var items_len = usize(0);
             while (items_len < header.data) {
                 var len: usize = undefined;
-                try self.decodeFromAlloc(raw[header_len + items_len ..], &len);
+                try self.decodeFromAlloc(raw[header_len + items_len ..], &len, allocator);
                 items_len += len;
             }
 
@@ -416,6 +424,14 @@ pub fn Repeated(comptime number: u63, comptime Tfn: var) type {
 
             len.* = header_len + items_len;
         }
+
+        pub fn decodeComplete(self: *Self) void {
+            if (self._decode_builder) |*decode_builder| {
+                std.debug.assert(self.data.len == 0);
+                self.data = decode_builder.toOwnedSlice();
+                self._decode_builder = null;
+            }
+        }
     };
 }
 
@@ -423,9 +439,9 @@ test "Repeated" {
     const twelve = [_]u8{ 12, 0, 0, 0 };
     const hundred = [_]u8{ 100, 0, 0, 0 };
     var repeated_field = Repeated(1, Fixed32){};
-    repeated_field.initDecoder(std.heap.direct_allocator);
     var len: usize = undefined;
-    try repeated_field.decodeFromAlloc(twelve[0..], &len);
-    try repeated_field.decodeFromAlloc(hundred[0..], &len);
-    testing.expectEqualSlices(u32, [_]u32{ 12, 100 }, repeated_field._decoder.?.toSlice());
+    try repeated_field.decodeFromAlloc(twelve[0..], &len, std.heap.direct_allocator);
+    try repeated_field.decodeFromAlloc(hundred[0..], &len, std.heap.direct_allocator);
+    repeated_field.decodeComplete();
+    testing.expectEqualSlices(u32, [_]u32{ 12, 100 }, repeated_field.data);
 }

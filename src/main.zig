@@ -117,6 +117,17 @@ pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !
             }
         }
     }
+
+    inline for (@typeInfo(T).Struct.fields) |field, i| {
+        switch (@typeInfo(field.field_type)) {
+            .Struct => {
+                if (@hasDecl(field.field_type, "decodeComplete")) {
+                    @field(result, field.name).decodeComplete();
+                }
+            },
+        }
+    }
+
     return result;
 }
 
