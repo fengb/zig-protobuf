@@ -121,7 +121,7 @@ pub fn init(comptime T: type) T {
     inline for (@typeInfo(T).Struct.fields) |field, i| {
         switch (@typeInfo(field.field_type)) {
             .Struct => {
-                @field(result, field.name).data = field.field_type.default;
+                @field(result, field.name) = field.field_type{};
             },
             else => {
                 std.debug.warn("{} - not a struct\n", field.name);

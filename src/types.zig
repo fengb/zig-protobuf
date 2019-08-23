@@ -87,9 +87,8 @@ fn FromBitCast(comptime TargetPrimitive: type, comptime Coder: type, comptime in
     return struct {
         const Self = @This();
 
-        data: TargetPrimitive,
+        data: TargetPrimitive = 0,
 
-        pub const default = 0;
         pub const field_info = info;
 
         pub fn encodeSize(self: Self) usize {
@@ -111,9 +110,8 @@ fn FromVarintCast(comptime TargetPrimitive: type, comptime Coder: type, comptime
     return struct {
         const Self = @This();
 
-        data: TargetPrimitive,
+        data: TargetPrimitive = 0,
 
-        pub const default = 0;
         pub const field_info = info;
 
         pub fn encodeSize(self: Self) usize {
@@ -233,10 +231,9 @@ pub fn Bytes(comptime number: u63) type {
     return struct {
         const Self = @This();
 
-        data: []u8,
+        data: []u8 = [_]u8{},
         allocator: ?*std.mem.Allocator = null,
 
-        pub const default = [_]u8{};
         pub const field_info = FieldInfo{
             .wire_type = .LengthDelimited,
             .number = number,
@@ -261,10 +258,9 @@ pub fn String(comptime number: u63) type {
     return struct {
         const Self = @This();
 
-        data: []u8,
+        data: []u8 = [_]u8{},
         allocator: ?*std.mem.Allocator = null,
 
-        pub const default = [_]u8{};
         pub const field_info = FieldInfo{
             .wire_type = .LengthDelimited,
             .number = number,
@@ -303,9 +299,8 @@ pub fn Bool(comptime number: u63) type {
     return struct {
         const Self = @This();
 
-        data: bool,
+        data: bool = false,
 
-        pub const default = false;
         pub const field_info = FieldInfo{
             .wire_type = .Varint,
             .number = number,
