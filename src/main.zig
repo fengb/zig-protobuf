@@ -91,6 +91,7 @@ pub fn marshal(comptime T: type, allocator: *std.mem.Allocator, item: T) ![]u8 {
 
 pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !T {
     var result = init(T);
+    errdefer deinit(T, result);
 
     var cursor = usize(0);
     while (cursor < bytes.len) {

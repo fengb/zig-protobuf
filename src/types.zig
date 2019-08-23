@@ -376,8 +376,11 @@ pub fn Repeated(comptime number: u63, comptime Tfn: var) type {
         _decode_builder: ?List = null,
 
         pub fn deinit(self: *Self) void {
-            std.debug.assert(self._decode_builder == null);
-            if (self.allocator) |alloc| {
+            if (self._decode_builder) |*decode_builder| {
+                std.debug.assert(self.data.len == 0);
+                decode_builder.deinit();
+                self.* = Self{};
+            } else if (self.allocator) |alloc| {
                 alloc.free(self.data);
                 self.* = Self{};
             }
@@ -433,6 +436,7 @@ pub fn Repeated(comptime number: u63, comptime Tfn: var) type {
         pub fn decodeComplete(self: *Self) void {
             if (self._decode_builder) |*decode_builder| {
                 std.debug.assert(self.data.len == 0);
+                self.allocator = decode_builder.allocator;
                 self.data = decode_builder.toOwnedSlice();
                 self._decode_builder = null;
             }
