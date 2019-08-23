@@ -102,7 +102,11 @@ pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !
             switch (@typeInfo(field.field_type)) {
                 .Struct => {
                     if (info.number == field.field_type.field_info.number) {
-                        try @field(result, field.name).decodeFrom(bytes[cursor..], &len);
+                        if (@hasDecl(field.field_type, "decodeFromAlloc")) {
+                            try @field(result, field.name).decodeFromAlloc(bytes[cursor..], &len, allocator);
+                        } else {
+                            try @field(result, field.name).decodeFrom(bytes[cursor..], &len);
+                        }
                         cursor += len;
                         break;
                     }
@@ -131,20 +135,48 @@ pub fn init(comptime T: type) T {
     return result;
 }
 
-test "marshalling" {
+pub fn deinit(comptime T: type, msg: *T) void {
+    inline for (@typeInfo(T).Struct.fields) |field, i| {
+        switch (@typeInfo(field.field_type)) {
+            .Struct => {
+                if (@hasDecl(field.field_type, "deinit")) {
+                    @field(msg, field.name).deinit();
+                }
+            },
+            else => {
+                std.debug.warn("{} - not a struct\n", field.name);
+            },
+        }
+    }
+}
+
+test "end-to-end" {
     const Example = struct {
         sint: types.Sint64(1),
+        str: types.String(12),
         boo: types.Bool(10),
     };
 
     var start = init(Example);
     testing.expectEqual(i64(0), start.sint.data);
     testing.expectEqual(false, start.boo.data);
+    testing.expectEqual(start.str.data, "");
+    testing.expectEqual(start.str.allocator, null);
 
     start.sint.data = -17;
     start.boo.data = true;
+    start.str.data = "weird";
 
     const binary = try marshal(Example, std.heap.direct_allocator, start);
-    const result = try unmarshal(Example, std.heap.direct_allocator, binary);
-    testing.expectEqual(start.sint, result.sint);
+    defer std.heap.direct_allocator.free(binary);
+
+    var result = try unmarshal(Example, std.heap.direct_allocator, binary);
+    testing.expectEqual(start.sint.data, result.sint.data);
+    testing.expectEqual(start.boo.data, result.boo.data);
+    testing.expectEqualSlices(u8, start.str.data, result.str.data);
+    testing.expectEqual(std.heap.direct_allocator, result.str.allocator.?);
+
+    deinit(Example, &result);
+    testing.expectEqual(result.str.data, "");
+    testing.expectEqual(result.str.allocator, null);
 }

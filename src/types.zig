@@ -151,7 +151,7 @@ fn testEncodeDecodeSlices(comptime T: type, base: T) !void {
     testing.expectEqual(base.encodeSize(), encoded_slice.len);
 
     var decoded: T = undefined;
-    try decoded.decodeFrom(encoded_slice, &decoded_len, std.heap.direct_allocator);
+    try decoded.decodeFromAlloc(encoded_slice, &decoded_len, std.heap.direct_allocator);
     testing.expectEqualSlices(u8, base.data, decoded.data);
     testing.expectEqual(base.encodeSize(), decoded_len);
 }
@@ -239,6 +239,13 @@ pub fn Bytes(comptime number: u63) type {
             .number = number,
         };
 
+        pub fn deinit(self: *Self) void {
+            if (self.allocator) |alloc| {
+                alloc.free(self.data);
+                self.* = Self{};
+            }
+        }
+
         pub fn encodeSize(self: Self) usize {
             return coder.BytesCoder.encodeSize(self.data);
         }
@@ -247,7 +254,7 @@ pub fn Bytes(comptime number: u63) type {
             return coder.BytesCoder.encode(buffer, self.data);
         }
 
-        pub fn decodeFrom(self: *Self, buffer: []const u8, len: *usize, allocator: *std.mem.Allocator) ParseError!void {
+        pub fn decodeFromAlloc(self: *Self, buffer: []const u8, len: *usize, allocator: *std.mem.Allocator) ParseError!void {
             self.data = try coder.BytesCoder.decode(buffer, len, allocator);
             self.allocator = allocator;
         }
@@ -258,13 +265,20 @@ pub fn String(comptime number: u63) type {
     return struct {
         const Self = @This();
 
-        data: []u8 = [_]u8{},
+        data: []const u8 = "",
         allocator: ?*std.mem.Allocator = null,
 
         pub const field_info = FieldInfo{
             .wire_type = .LengthDelimited,
             .number = number,
         };
+
+        pub fn deinit(self: *Self) void {
+            if (self.allocator) |alloc| {
+                alloc.free(self.data);
+                self.* = Self{};
+            }
+        }
 
         pub fn encodeSize(self: Self) usize {
             return coder.BytesCoder.encodeSize(self.data);
@@ -274,7 +288,7 @@ pub fn String(comptime number: u63) type {
             return coder.BytesCoder.encode(buffer, self.data);
         }
 
-        pub fn decodeFrom(self: *Self, buffer: []const u8, len: *usize, allocator: *std.mem.Allocator) ParseError!void {
+        pub fn decodeFromAlloc(self: *Self, buffer: []const u8, len: *usize, allocator: *std.mem.Allocator) ParseError!void {
             // TODO: validate unicode
             self.data = try coder.BytesCoder.decode(buffer, len, allocator);
             self.allocator = allocator;
@@ -376,7 +390,7 @@ pub fn Repeated(comptime number: u63, comptime Tfn: var) type {
             return buffer[0..cursor];
         }
 
-        pub fn decodeFrom(self: *Self, raw: []const u8, len: *usize) ParseError!void {
+        pub fn decodeFromAlloc(self: *Self, raw: []const u8, len: *usize) ParseError!void {
             std.debug.assert(self._decoder != null);
             var base: T = undefined;
             try base.decodeFrom(raw, len);
@@ -391,7 +405,7 @@ pub fn Repeated(comptime number: u63, comptime Tfn: var) type {
             var items_len = usize(0);
             while (items_len < header.data) {
                 var len: usize = undefined;
-                try self.decodeFrom(raw[header_len + items_len ..], &len);
+                try self.decodeFromAlloc(raw[header_len + items_len ..], &len);
                 items_len += len;
             }
 
@@ -411,7 +425,7 @@ test "Repeated" {
     var repeated_field = Repeated(1, Fixed32){};
     repeated_field.initDecoder(std.heap.direct_allocator);
     var len: usize = undefined;
-    try repeated_field.decodeFrom(twelve[0..], &len);
-    try repeated_field.decodeFrom(hundred[0..], &len);
+    try repeated_field.decodeFromAlloc(twelve[0..], &len);
+    try repeated_field.decodeFromAlloc(hundred[0..], &len);
     testing.expectEqualSlices(u32, [_]u32{ 12, 100 }, repeated_field._decoder.?.toSlice());
 }

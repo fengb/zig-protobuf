@@ -168,7 +168,7 @@ pub const Fixed32Coder = struct {
 };
 
 pub const BytesCoder = struct {
-    pub fn encodeSize(data: []u8) usize {
+    pub fn encodeSize(data: []const u8) usize {
         const header_size = Uint64Coder.encodeSize(data.len);
         return header_size + data.len;
     }
