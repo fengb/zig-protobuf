@@ -103,11 +103,10 @@ pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !
                 .Struct => {
                     if (info.number == field.field_type.field_info.number) {
                         if (@hasDecl(field.field_type, "decodeFromAlloc")) {
-                            try @field(result, field.name).decodeFromAlloc(bytes[cursor..], &len, allocator);
+                            cursor += try @field(result, field.name).decodeFromAlloc(bytes[cursor..], allocator);
                         } else {
-                            try @field(result, field.name).decodeFrom(bytes[cursor..], &len);
+                            cursor += try @field(result, field.name).decodeFrom(bytes[cursor..]);
                         }
-                        cursor += len;
                         break;
                     }
                 },
@@ -124,6 +123,9 @@ pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !
                 if (@hasDecl(field.field_type, "decodeComplete")) {
                     @field(result, field.name).decodeComplete();
                 }
+            },
+            else => {
+                std.debug.warn("{} - not a struct\n", field.name);
             },
         }
     }
