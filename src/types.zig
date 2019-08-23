@@ -13,83 +13,83 @@ const WireType = enum(u3) {
     _32bit = 5,
 };
 
-pub const FieldInfo = struct {
+pub const FieldMeta = struct {
     wire_type: WireType,
     number: u61,
 
-    pub fn init(value: u64) FieldInfo {
-        return FieldInfo{
+    pub fn init(value: u64) FieldMeta {
+        return FieldMeta{
             .wire_type = @intToEnum(WireType, @truncate(u3, value)),
             .number = @intCast(u61, value >> 3),
         };
     }
 
-    pub fn encodeInto(self: FieldInfo, buffer: []u8) []u8 {
+    pub fn encodeInto(self: FieldMeta, buffer: []u8) []u8 {
         const uint = (@intCast(u64, self.number) << 3) + @enumToInt(self.wire_type);
         return coder.Uint64Coder.encode(buffer, uint);
     }
 
-    pub fn decode(buffer: []const u8, len: *usize) ParseError!FieldInfo {
+    pub fn decode(buffer: []const u8, len: *usize) ParseError!FieldMeta {
         const raw = try coder.Uint64Coder.decode(buffer, len);
         return init(raw);
     }
 };
 
-test "FieldInfo" {
-    const field = FieldInfo.init(8);
+test "FieldMeta" {
+    const field = FieldMeta.init(8);
     testing.expectEqual(WireType.Varint, field.wire_type);
     testing.expectEqual(u61(1), field.number);
 }
 
 pub fn Uint64(comptime number: u63) type {
-    return FromVarintCast(u64, coder.Uint64Coder, FieldInfo{
+    return FromVarintCast(u64, coder.Uint64Coder, FieldMeta{
         .wire_type = .Varint,
         .number = number,
     });
 }
 
 pub fn Uint32(comptime number: u63) type {
-    return FromVarintCast(u32, coder.Uint64Coder, FieldInfo{
+    return FromVarintCast(u32, coder.Uint64Coder, FieldMeta{
         .wire_type = .Varint,
         .number = number,
     });
 }
 
 pub fn Int64(comptime number: u63) type {
-    return FromVarintCast(i64, coder.Int64Coder, FieldInfo{
+    return FromVarintCast(i64, coder.Int64Coder, FieldMeta{
         .wire_type = .Varint,
         .number = number,
     });
 }
 
 pub fn Int32(comptime number: u63) type {
-    return FromVarintCast(i32, coder.Int64Coder, FieldInfo{
+    return FromVarintCast(i32, coder.Int64Coder, FieldMeta{
         .wire_type = .Varint,
         .number = number,
     });
 }
 
 pub fn Sint64(comptime number: u63) type {
-    return FromVarintCast(i64, coder.Sint64Coder, FieldInfo{
+    return FromVarintCast(i64, coder.Sint64Coder, FieldMeta{
         .wire_type = .Varint,
         .number = number,
     });
 }
 
 pub fn Sint32(comptime number: u63) type {
-    return FromVarintCast(i32, coder.Sint64Coder, FieldInfo{
+    return FromVarintCast(i32, coder.Sint64Coder, FieldMeta{
         .wire_type = .Varint,
         .number = number,
     });
 }
 
-fn FromBitCast(comptime TargetPrimitive: type, comptime Coder: type, comptime info: FieldInfo) type {
+fn FromBitCast(comptime TargetPrimitive: type, comptime Coder: type, comptime info: FieldMeta) type {
     return struct {
         const Self = @This();
 
         data: TargetPrimitive = 0,
 
-        pub const field_info = info;
+        pub const field_meta = info;
 
         pub fn encodeSize(self: Self) usize {
             return Coder.encodeSize(@bitCast(Coder.primitive, self.data));
@@ -108,13 +108,13 @@ fn FromBitCast(comptime TargetPrimitive: type, comptime Coder: type, comptime in
     };
 }
 
-fn FromVarintCast(comptime TargetPrimitive: type, comptime Coder: type, comptime info: FieldInfo) type {
+fn FromVarintCast(comptime TargetPrimitive: type, comptime Coder: type, comptime info: FieldMeta) type {
     return struct {
         const Self = @This();
 
         data: TargetPrimitive = 0,
 
-        pub const field_info = info;
+        pub const field_meta = info;
 
         pub fn encodeSize(self: Self) usize {
             return Coder.encodeSize(self.data);
@@ -171,37 +171,37 @@ test "Var int" {
 }
 
 pub fn Fixed64(comptime number: u63) type {
-    return FromBitCast(u64, coder.Fixed64Coder, FieldInfo{
+    return FromBitCast(u64, coder.Fixed64Coder, FieldMeta{
         .wire_type = ._64bit,
         .number = number,
     });
 }
 pub fn Sfixed64(comptime number: u63) type {
-    return FromBitCast(i64, coder.Fixed64Coder, FieldInfo{
+    return FromBitCast(i64, coder.Fixed64Coder, FieldMeta{
         .wire_type = ._64bit,
         .number = number,
     });
 }
 pub fn Fixed32(comptime number: u63) type {
-    return FromBitCast(u32, coder.Fixed32Coder, FieldInfo{
+    return FromBitCast(u32, coder.Fixed32Coder, FieldMeta{
         .wire_type = ._32bit,
         .number = number,
     });
 }
 pub fn Sfixed32(comptime number: u63) type {
-    return FromBitCast(i32, coder.Fixed32Coder, FieldInfo{
+    return FromBitCast(i32, coder.Fixed32Coder, FieldMeta{
         .wire_type = ._32bit,
         .number = number,
     });
 }
 pub fn Double(comptime number: u63) type {
-    return FromBitCast(f64, coder.Fixed64Coder, FieldInfo{
+    return FromBitCast(f64, coder.Fixed64Coder, FieldMeta{
         .wire_type = ._64bit,
         .number = number,
     });
 }
 pub fn Float(comptime number: u63) type {
-    return FromBitCast(f32, coder.Fixed32Coder, FieldInfo{
+    return FromBitCast(f32, coder.Fixed32Coder, FieldMeta{
         .wire_type = ._32bit,
         .number = number,
     });
@@ -236,7 +236,7 @@ pub fn Bytes(comptime number: u63) type {
         data: []u8 = [_]u8{},
         allocator: ?*std.mem.Allocator = null,
 
-        pub const field_info = FieldInfo{
+        pub const field_meta = FieldMeta{
             .wire_type = .LengthDelimited,
             .number = number,
         };
@@ -272,7 +272,7 @@ pub fn String(comptime number: u63) type {
         data: []const u8 = "",
         allocator: ?*std.mem.Allocator = null,
 
-        pub const field_info = FieldInfo{
+        pub const field_meta = FieldMeta{
             .wire_type = .LengthDelimited,
             .number = number,
         };
@@ -321,7 +321,7 @@ pub fn Bool(comptime number: u63) type {
 
         data: bool = false,
 
-        pub const field_info = FieldInfo{
+        pub const field_meta = FieldMeta{
             .wire_type = .Varint,
             .number = number,
         };

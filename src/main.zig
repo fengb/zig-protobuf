@@ -47,9 +47,9 @@ pub fn StreamingMarshal(comptime T: type) type {
             inline for (@typeInfo(T).Struct.fields) |field, i| {
                 switch (@typeInfo(field.field_type)) {
                     .Struct => {
-                        if (@hasDecl(field.field_type, "field_info")) {
+                        if (@hasDecl(field.field_type, "field_meta")) {
                             suspend;
-                            Self.out = field.field_type.field_info.encodeInto(bufslice);
+                            Self.out = field.field_type.field_meta.encodeInto(bufslice);
 
                             suspend;
                             Self.out = @field(item, field.name).encodeInto(bufslice);
@@ -96,13 +96,13 @@ pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !
     var cursor = usize(0);
     while (cursor < bytes.len) {
         var len: usize = undefined;
-        const info = try types.FieldInfo.decode(bytes[cursor..], &len);
+        const info = try types.FieldMeta.decode(bytes[cursor..], &len);
         cursor += len;
 
         inline for (@typeInfo(T).Struct.fields) |field, i| {
             switch (@typeInfo(field.field_type)) {
                 .Struct => {
-                    if (info.number == field.field_type.field_info.number) {
+                    if (info.number == field.field_type.field_meta.number) {
                         if (@hasDecl(field.field_type, "decodeFromAlloc")) {
                             cursor += try @field(result, field.name).decodeFromAlloc(bytes[cursor..], allocator);
                         } else {
