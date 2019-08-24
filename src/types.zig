@@ -23,6 +23,11 @@ pub const AsyncContext = struct {
         return self.buffer[0..self.cursor];
     }
 
+    fn write(self: *AsyncContext, bytes: []const u8) std.os.WriteError!void {
+        std.mem.copy(u8, self.buffer[self.cursor..], bytes);
+        self.cursor += bytes.len;
+    }
+
     fn append(self: *AsyncContext, items: []const u8) void {
         std.mem.copy(u8, self.buffer, items);
         self.cursor = items.len;
@@ -164,7 +169,7 @@ var rng = std.rand.DefaultPrng.init(0);
 fn testEncodeDecode(comptime T: type, base: T) !void {
     var buf: [1000]u8 = undefined;
 
-    var ctx = AsyncContext{ .buffer = buf[0..] };
+    var ctx = AsyncContext{ .buffer = buf[0..], .cursor = 0 };
 
     _ = async base.encodeInto(&ctx);
     testing.expectEqual(base.encodeSize(), ctx.out().len);
@@ -178,7 +183,7 @@ fn testEncodeDecode(comptime T: type, base: T) !void {
 fn testEncodeDecodeSlices(comptime T: type, base: T) !void {
     var buf: [1000]u8 = undefined;
 
-    var ctx = AsyncContext{ .buffer = buf[0..] };
+    var ctx = AsyncContext{ .buffer = buf[0..], .cursor = 0 };
 
     _ = async base.encodeInto(&ctx);
     testing.expectEqual(base.encodeSize(), ctx.out().len);
@@ -283,8 +288,8 @@ pub fn Bytes(comptime number: u63) type {
             return coder.BytesCoder.encodeSize(self.data);
         }
 
-        pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
-            ctx.append(coder.BytesCoder.encode(ctx.buffer, self.data));
+        pub fn encodeInto(self: Self, ctx: *AsyncContext) !void {
+            try coder.BytesCoder.encodeInto(AsyncContext, ctx, self.data);
         }
 
         pub fn decodeFromAlloc(self: *Self, buffer: []const u8, allocator: *std.mem.Allocator) ParseError!usize {
@@ -319,8 +324,8 @@ pub fn String(comptime number: u63) type {
             return coder.BytesCoder.encodeSize(self.data);
         }
 
-        pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
-            ctx.append(coder.BytesCoder.encode(ctx.buffer, self.data));
+        pub fn encodeInto(self: Self, ctx: *AsyncContext) !void {
+            try coder.BytesCoder.encodeInto(AsyncContext, ctx, self.data);
         }
 
         pub fn decodeFromAlloc(self: *Self, buffer: []const u8, allocator: *std.mem.Allocator) ParseError!usize {

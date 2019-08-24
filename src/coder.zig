@@ -1,4 +1,5 @@
 const std = @import("std");
+const types = @import("types.zig");
 const testing = std.testing;
 
 pub const ParseError = error{
@@ -173,11 +174,11 @@ pub const BytesCoder = struct {
         return header_size + data.len;
     }
 
-    pub fn encode(buffer: []u8, data: []const u8) []u8 {
-        const header = Uint64Coder.encode(buffer, data.len);
-        // TODO: use a generator instead of buffer overflow
-        std.mem.copy(u8, buffer[header.len..], data);
-        return buffer[0 .. header.len + data.len];
+    pub fn encodeInto(comptime Writer: type, writer: *Writer, data: []const u8) !void {
+        var buffer: [100]u8 = undefined;
+        const header = Uint64Coder.encode(&buffer, data.len);
+        try writer.write(header);
+        try writer.write(data);
     }
 
     pub fn decode(buffer: []const u8, len: *usize, allocator: *std.mem.Allocator) ![]u8 {
@@ -196,11 +197,13 @@ pub const BytesCoder = struct {
 
 test "BytesCoder" {
     var buffer: [1000]u8 = undefined;
+    var ctx = types.AsyncContext{ .buffer = buffer[0..], .cursor = 0 };
+    try BytesCoder.encodeInto(types.AsyncContext, &ctx, "testing");
 
     testing.expectEqualSlices(
         u8,
         [_]u8{ 0x07, 0x74, 0x65, 0x73, 0x74, 0x69, 0x6e, 0x67 },
-        BytesCoder.encode(buffer[0..], "testing"),
+        ctx.out(),
     );
 }
 
