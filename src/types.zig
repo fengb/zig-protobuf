@@ -9,10 +9,13 @@ pub const AsyncContext = struct {
     buffer: []u8 = [_]u8{},
     out: []u8 = [_]u8{},
 
-    fn next(self: *Self, buffer: []u8) ?[]u8 {
+    fn next(self: *AsyncContext, buffer: []u8) ?[]u8 {
         if (self.suspended) |frame| {
+            // Copy elision thing... maybe bug?
+            const frame_copy = frame;
             self.buffer = buffer;
-            resume frame;
+            self.suspended = null;
+            resume frame_copy;
             return self.out;
         }
         return null;
@@ -42,8 +45,8 @@ pub const FieldMeta = struct {
     pub fn encodeInto(self: FieldMeta, ctx: *AsyncContext) void {
         const uint = (@intCast(u64, self.number) << 3) + @enumToInt(self.wire_type);
         ctx.suspended = @frame();
-        ctx.out = coder.Uint64Coder.encode(ctx.buffer, uint);
         suspend;
+        ctx.out = coder.Uint64Coder.encode(ctx.buffer, uint);
     }
 
     pub fn decode(buffer: []const u8, len: *usize) ParseError!FieldMeta {
@@ -114,8 +117,8 @@ fn FromBitCast(comptime TargetPrimitive: type, comptime Coder: type, comptime in
 
         pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
             ctx.suspended = @frame();
-            ctx.out = Coder.encode(ctx.buffer, @bitCast(Coder.primitive, self.data));
             suspend;
+            ctx.out = Coder.encode(ctx.buffer, @bitCast(Coder.primitive, self.data));
         }
 
         pub fn decodeFrom(self: *Self, buffer: []const u8) ParseError!usize {
@@ -141,8 +144,8 @@ fn FromVarintCast(comptime TargetPrimitive: type, comptime Coder: type, comptime
 
         pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
             ctx.suspended = @frame();
-            ctx.out = Coder.encode(ctx.buffer, self.data);
             suspend;
+            ctx.out = Coder.encode(ctx.buffer, self.data);
         }
 
         pub fn decodeFrom(self: *Self, buffer: []const u8) ParseError!usize {
@@ -279,8 +282,8 @@ pub fn Bytes(comptime number: u63) type {
 
         pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
             ctx.suspended = @frame();
-            ctx.out = coder.BytesCoder.encode(ctx.buffer, self.data);
             suspend;
+            ctx.out = coder.BytesCoder.encode(ctx.buffer, self.data);
         }
 
         pub fn decodeFromAlloc(self: *Self, buffer: []const u8, allocator: *std.mem.Allocator) ParseError!usize {
@@ -317,8 +320,8 @@ pub fn String(comptime number: u63) type {
 
         pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
             ctx.suspended = @frame();
-            ctx.out = coder.BytesCoder.encode(ctx.buffer, self.data);
             suspend;
+            ctx.out = coder.BytesCoder.encode(ctx.buffer, self.data);
         }
 
         pub fn decodeFromAlloc(self: *Self, buffer: []const u8, allocator: *std.mem.Allocator) ParseError!usize {
@@ -361,9 +364,9 @@ pub fn Bool(comptime number: u63) type {
 
         pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
             ctx.suspended = @frame();
+            suspend;
             ctx.buffer[0] = if (self.data) u8(1) else 0;
             ctx.out = ctx.buffer[0..1];
-            suspend;
         }
 
         pub fn decodeFrom(self: *Self, bytes: []const u8) ParseError!usize {

@@ -22,76 +22,42 @@ pub const String = types.String;
 
 pub const Repeated = types.Repeated;
 
-pub fn StreamingMarshal(comptime T: type) type {
-    return struct {
-        const Self = @This();
-
-        // TODO: this is so terrible.
-        // Temporarily sticking this here because I can't make spin a method due to circular references
-        var out: ?[]const u8 = [_]u8{};
-
-        item: T,
-        frame: @Frame(spin),
-
-        pub fn init(item: T) Self {
-            return Self{
-                .item = item,
-                .frame = async spin(item),
-            };
-        }
-
-        fn spin(item: T) void {
-            var buffer: [1000]u8 = undefined;
-            var bufslice = buffer[0..];
-
-            inline for (@typeInfo(T).Struct.fields) |field, i| {
-                switch (@typeInfo(field.field_type)) {
-                    .Struct => {
-                        if (@hasDecl(field.field_type, "field_meta")) {
-                            suspend;
-                            Self.out = field.field_type.field_meta.encodeInto(bufslice);
-
-                            suspend;
-                            Self.out = @field(item, field.name).encodeInto(bufslice);
-                        } else {
-                            std.debug.warn("{} - unknown struct\n", field.name);
-                        }
-                    },
-                    else => {
-                        std.debug.warn("{} - not a struct\n", field.name);
-                    },
+pub fn streaming_encode(comptime T: type, item: T, ctx: *types.AsyncContext) void {
+    inline for (@typeInfo(T).Struct.fields) |field, i| {
+        switch (@typeInfo(field.field_type)) {
+            .Struct => {
+                if (@hasDecl(field.field_type, "field_meta")) {
+                    field.field_type.field_meta.encodeInto(ctx);
+                    @field(item, field.name).encodeInto(ctx);
+                } else {
+                    std.debug.warn("{} - unknown struct\n", field.name);
                 }
-            }
-            suspend;
-            Self.out = null;
+            },
+            else => {
+                std.debug.warn("{} - not a struct\n", field.name);
+            },
         }
-
-        pub fn next(self: *Self) ?[]const u8 {
-            if (out != null) {
-                resume self.frame;
-                return out;
-            }
-            return null;
-        }
-    };
+    }
 }
 
 pub fn marshal(comptime T: type, allocator: *std.mem.Allocator, item: T) ![]u8 {
-    var buffer = std.ArrayList(u8).init(allocator);
-    errdefer buffer.deinit();
+    var result = std.ArrayList(u8).init(allocator);
+    errdefer result.deinit();
 
-    var stream = StreamingMarshal(T).init(item);
+    var stream = types.AsyncContext{};
+    _ = async streaming_encode(T, item, &stream);
 
-    while (stream.next()) |data| {
-        try buffer.appendSlice(data);
+    var scratch_pad: [1000]u8 = undefined;
+    while (stream.next(scratch_pad[0..])) |data| {
+        try result.appendSlice(data);
     }
 
-    return buffer.toOwnedSlice();
+    return result.toOwnedSlice();
 }
 
 pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !T {
     var result = init(T);
-    errdefer deinit(T, result);
+    errdefer deinit(T, &result);
 
     var cursor = usize(0);
     while (cursor < bytes.len) {
