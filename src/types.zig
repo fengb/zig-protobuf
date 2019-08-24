@@ -5,20 +5,29 @@ const testing = std.testing;
 const ParseError = coder.ParseError;
 
 pub const AsyncContext = struct {
-    suspended: ?anyframe = null,
+    suspended: anyframe = undefined,
     buffer: []u8 = [_]u8{},
-    out: []u8 = [_]u8{},
+    cursor: usize = std.math.maxInt(usize),
 
     fn next(self: *AsyncContext, buffer: []u8) ?[]u8 {
-        if (self.suspended) |frame| {
-            // Copy elision thing... maybe bug?
-            const frame_copy = frame;
+        if (self.cursor > 0) {
             self.buffer = buffer;
-            self.suspended = null;
-            resume frame_copy;
-            return self.out;
+            self.cursor = 0;
+            resume self.suspended;
+            return self.out();
         }
         return null;
+    }
+
+    fn out(self: AsyncContext) []u8 {
+        return self.buffer[0..self.cursor];
+    }
+
+    fn append(self: *AsyncContext, items: []const u8) void {
+        std.mem.copy(u8, self.buffer, items);
+        self.cursor = items.len;
+        self.suspended = @frame();
+        suspend;
     }
 };
 
@@ -44,9 +53,7 @@ pub const FieldMeta = struct {
 
     pub fn encodeInto(self: FieldMeta, ctx: *AsyncContext) void {
         const uint = (@intCast(u64, self.number) << 3) + @enumToInt(self.wire_type);
-        ctx.suspended = @frame();
-        suspend;
-        ctx.out = coder.Uint64Coder.encode(ctx.buffer, uint);
+        ctx.append(coder.Uint64Coder.encode(ctx.buffer, uint));
     }
 
     pub fn decode(buffer: []const u8, len: *usize) ParseError!FieldMeta {
@@ -116,9 +123,7 @@ fn FromBitCast(comptime TargetPrimitive: type, comptime Coder: type, comptime in
         }
 
         pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
-            ctx.suspended = @frame();
-            suspend;
-            ctx.out = Coder.encode(ctx.buffer, @bitCast(Coder.primitive, self.data));
+            ctx.append(Coder.encode(ctx.buffer, @bitCast(Coder.primitive, self.data)));
         }
 
         pub fn decodeFrom(self: *Self, buffer: []const u8) ParseError!usize {
@@ -143,9 +148,7 @@ fn FromVarintCast(comptime TargetPrimitive: type, comptime Coder: type, comptime
         }
 
         pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
-            ctx.suspended = @frame();
-            suspend;
-            ctx.out = Coder.encode(ctx.buffer, self.data);
+            ctx.append(Coder.encode(ctx.buffer, self.data));
         }
 
         pub fn decodeFrom(self: *Self, buffer: []const u8) ParseError!usize {
@@ -164,10 +167,10 @@ fn testEncodeDecode(comptime T: type, base: T) !void {
     var ctx = AsyncContext{ .buffer = buf[0..] };
 
     _ = async base.encodeInto(&ctx);
-    testing.expectEqual(base.encodeSize(), ctx.out.len);
+    testing.expectEqual(base.encodeSize(), ctx.out().len);
 
     var decoded: T = undefined;
-    const decoded_len = try decoded.decodeFrom(ctx.out);
+    const decoded_len = try decoded.decodeFrom(ctx.out());
     testing.expectEqual(base.data, decoded.data);
     testing.expectEqual(base.encodeSize(), decoded_len);
 }
@@ -178,10 +181,10 @@ fn testEncodeDecodeSlices(comptime T: type, base: T) !void {
     var ctx = AsyncContext{ .buffer = buf[0..] };
 
     _ = async base.encodeInto(&ctx);
-    testing.expectEqual(base.encodeSize(), ctx.out.len);
+    testing.expectEqual(base.encodeSize(), ctx.out().len);
 
     var decoded: T = undefined;
-    const decoded_len = try decoded.decodeFromAlloc(ctx.out, std.heap.direct_allocator);
+    const decoded_len = try decoded.decodeFromAlloc(ctx.out(), std.heap.direct_allocator);
     testing.expectEqualSlices(u8, base.data, decoded.data);
     testing.expectEqual(base.encodeSize(), decoded_len);
 }
@@ -281,9 +284,7 @@ pub fn Bytes(comptime number: u63) type {
         }
 
         pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
-            ctx.suspended = @frame();
-            suspend;
-            ctx.out = coder.BytesCoder.encode(ctx.buffer, self.data);
+            ctx.append(coder.BytesCoder.encode(ctx.buffer, self.data));
         }
 
         pub fn decodeFromAlloc(self: *Self, buffer: []const u8, allocator: *std.mem.Allocator) ParseError!usize {
@@ -319,9 +320,7 @@ pub fn String(comptime number: u63) type {
         }
 
         pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
-            ctx.suspended = @frame();
-            suspend;
-            ctx.out = coder.BytesCoder.encode(ctx.buffer, self.data);
+            ctx.append(coder.BytesCoder.encode(ctx.buffer, self.data));
         }
 
         pub fn decodeFromAlloc(self: *Self, buffer: []const u8, allocator: *std.mem.Allocator) ParseError!usize {
@@ -363,10 +362,8 @@ pub fn Bool(comptime number: u63) type {
         }
 
         pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
-            ctx.suspended = @frame();
-            suspend;
-            ctx.buffer[0] = if (self.data) u8(1) else 0;
-            ctx.out = ctx.buffer[0..1];
+            const value = if (self.data) [_]u8{1} else [_]u8{0};
+            ctx.append(value[0..]);
         }
 
         pub fn decodeFrom(self: *Self, bytes: []const u8) ParseError!usize {

@@ -23,6 +23,9 @@ pub const String = types.String;
 pub const Repeated = types.Repeated;
 
 pub fn streaming_encode(comptime T: type, item: T, ctx: *types.AsyncContext) void {
+    ctx.suspended = @frame();
+    suspend;
+
     inline for (@typeInfo(T).Struct.fields) |field, i| {
         switch (@typeInfo(field.field_type)) {
             .Struct => {
