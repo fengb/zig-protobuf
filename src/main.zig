@@ -22,16 +22,13 @@ pub const String = types.String;
 
 pub const Repeated = types.Repeated;
 
-pub fn streaming_encode(comptime T: type, item: T, ctx: *types.AsyncContext) void {
-    ctx.suspended = @frame();
-    suspend;
-
+pub fn encode(comptime T: type, item: T, writer: *types.U8Writer) !void {
     inline for (@typeInfo(T).Struct.fields) |field, i| {
         switch (@typeInfo(field.field_type)) {
             .Struct => {
                 if (@hasDecl(field.field_type, "field_meta")) {
-                    field.field_type.field_meta.encodeInto(ctx);
-                    @field(item, field.name).encodeInto(ctx);
+                    try field.field_type.field_meta.encodeInto(types.U8Writer, writer);
+                    try @field(item, field.name).encodeInto(types.U8Writer, writer);
                 } else {
                     std.debug.warn("{} - unknown struct\n", field.name);
                 }
@@ -44,18 +41,12 @@ pub fn streaming_encode(comptime T: type, item: T, ctx: *types.AsyncContext) voi
 }
 
 pub fn marshal(comptime T: type, allocator: *std.mem.Allocator, item: T) ![]u8 {
-    var result = std.ArrayList(u8).init(allocator);
-    errdefer result.deinit();
+    var writer = types.U8Writer.init(allocator);
+    errdefer writer.deinit();
 
-    var stream = types.AsyncContext{};
-    _ = async streaming_encode(T, item, &stream);
+    try encode(T, item, &writer);
 
-    var scratch_pad: [1000]u8 = undefined;
-    while (stream.next(scratch_pad[0..])) |data| {
-        try result.appendSlice(data);
-    }
-
-    return result.toOwnedSlice();
+    return writer.toOwnedSlice();
 }
 
 pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !T {

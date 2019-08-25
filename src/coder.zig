@@ -1,5 +1,4 @@
 const std = @import("std");
-const types = @import("types.zig");
 const testing = std.testing;
 
 pub const ParseError = error{
@@ -16,19 +15,18 @@ pub const Uint64Coder = struct {
         return std.math.max(divCeil(u64, bits, 7), 1);
     }
 
-    pub fn encode(buffer: []u8, data: u64) []u8 {
-        if (data == 0) {
-            buffer[0] = 0;
-            return buffer[0..1];
-        }
+    pub fn encodeInto(comptime Writer: type, writer: *Writer, data: u64) !void {
+        var buffer = [_]u8{0};
+
         var i = usize(0);
         var value = data;
-        while (value > 0) : (i += 1) {
-            buffer[i] = u8(0x80) + @truncate(u7, value);
+        while (value >= 0x80) : (i += 1) {
+            buffer[0] = u8(0x80) + @truncate(u7, value);
+            try writer.write(buffer[0..]);
             value >>= 7;
         }
-        buffer[i - 1] &= 0x7F;
-        return buffer[0..i];
+        buffer[0] = @truncate(u7, value);
+        try writer.write(buffer[0..]);
     }
 
     pub fn decode(bytes: []const u8, len: *usize) ParseError!u64 {
@@ -69,8 +67,8 @@ pub const Int64Coder = struct {
         return Uint64Coder.encodeSize(@bitCast(u64, data));
     }
 
-    pub fn encode(buffer: []u8, data: i64) []u8 {
-        return Uint64Coder.encode(buffer, @bitCast(u64, data));
+    pub fn encodeInto(comptime Writer: type, writer: *Writer, data: i64) !void {
+        try Uint64Coder.encodeInto(Writer, writer, @bitCast(u64, data));
     }
 
     pub fn decode(bytes: []const u8, len: *usize) ParseError!i64 {
@@ -79,14 +77,12 @@ pub const Int64Coder = struct {
 };
 
 test "Int64Coder" {
-    var buf1: [1000]u8 = undefined;
-    var buf2: [1000]u8 = undefined;
+    var writer1 = TestWriter{};
+    var writer2 = TestWriter{};
 
-    testing.expectEqualSlices(
-        u8,
-        Uint64Coder.encode(buf1[0..], std.math.maxInt(u64)),
-        Int64Coder.encode(buf2[0..], -1),
-    );
+    try Uint64Coder.encodeInto(TestWriter, &writer1, std.math.maxInt(u64));
+    try Int64Coder.encodeInto(TestWriter, &writer2, -1);
+    testing.expectEqualSlices(u8, writer1.slice(), writer2.slice());
 }
 
 pub const Sint64Coder = struct {
@@ -96,8 +92,8 @@ pub const Sint64Coder = struct {
         return Uint64Coder.encodeSize(@bitCast(u64, (data << 1) ^ (data >> 63)));
     }
 
-    pub fn encode(buffer: []u8, data: i64) []u8 {
-        return Uint64Coder.encode(buffer, @bitCast(u64, (data << 1) ^ (data >> 63)));
+    pub fn encodeInto(comptime Writer: type, writer: *Writer, data: i64) !void {
+        try Uint64Coder.encodeInto(Writer, writer, @bitCast(u64, (data << 1) ^ (data >> 63)));
     }
 
     pub fn decode(bytes: []const u8, len: *usize) ParseError!i64 {
@@ -108,26 +104,20 @@ pub const Sint64Coder = struct {
 };
 
 test "Sint64Coder" {
-    var buf1: [1000]u8 = undefined;
-    var buf2: [1000]u8 = undefined;
+    var writer1 = TestWriter{};
+    var writer2 = TestWriter{};
 
-    testing.expectEqualSlices(
-        u8,
-        Uint64Coder.encode(buf1[0..], 1),
-        Sint64Coder.encode(buf2[0..], -1),
-    );
+    try Uint64Coder.encodeInto(TestWriter, &writer1, 1);
+    try Sint64Coder.encodeInto(TestWriter, &writer2, -1);
+    testing.expectEqualSlices(u8, writer1.slice(), writer2.slice());
 
-    testing.expectEqualSlices(
-        u8,
-        Uint64Coder.encode(buf1[0..], 4294967294),
-        Sint64Coder.encode(buf2[0..], 2147483647),
-    );
+    try Uint64Coder.encodeInto(TestWriter, &writer1, 4294967294);
+    try Sint64Coder.encodeInto(TestWriter, &writer2, 2147483647);
+    testing.expectEqualSlices(u8, writer1.slice(), writer2.slice());
 
-    testing.expectEqualSlices(
-        u8,
-        Uint64Coder.encode(buf1[0..], 4294967295),
-        Sint64Coder.encode(buf2[0..], -2147483648),
-    );
+    try Uint64Coder.encodeInto(TestWriter, &writer1, 4294967295);
+    try Sint64Coder.encodeInto(TestWriter, &writer2, -2147483648);
+    testing.expectEqualSlices(u8, writer1.slice(), writer2.slice());
 }
 
 pub const Fixed64Coder = struct {
@@ -137,10 +127,10 @@ pub const Fixed64Coder = struct {
         return 8;
     }
 
-    pub fn encode(buffer: []u8, data: u64) []u8 {
-        var result = buffer[0..encodeSize(data)];
-        std.mem.writeIntSliceLittle(u64, result, data);
-        return result;
+    pub fn encodeInto(comptime Writer: type, writer: *Writer, data: u64) !void {
+        var buffer = [_]u8{0} ** 8;
+        std.mem.writeIntSliceLittle(u64, buffer[0..], data);
+        try writer.write(buffer[0..]);
     }
 
     pub fn decode(bytes: []const u8, len: *usize) ParseError!u64 {
@@ -156,10 +146,10 @@ pub const Fixed32Coder = struct {
         return 4;
     }
 
-    pub fn encode(buffer: []u8, data: u32) []u8 {
-        var result = buffer[0..encodeSize(data)];
-        std.mem.writeIntSliceLittle(u32, result, data);
-        return result;
+    pub fn encodeInto(comptime Writer: type, writer: *Writer, data: u32) !void {
+        var buffer = [_]u8{0} ** 4;
+        std.mem.writeIntSliceLittle(u32, buffer[0..], data);
+        try writer.write(buffer[0..]);
     }
 
     pub fn decode(bytes: []const u8, len: *usize) ParseError!u32 {
@@ -175,9 +165,7 @@ pub const BytesCoder = struct {
     }
 
     pub fn encodeInto(comptime Writer: type, writer: *Writer, data: []const u8) !void {
-        var buffer: [100]u8 = undefined;
-        const header = Uint64Coder.encode(&buffer, data.len);
-        try writer.write(header);
+        try Uint64Coder.encodeInto(Writer, writer, data.len);
         try writer.write(data);
     }
 
@@ -196,17 +184,30 @@ pub const BytesCoder = struct {
 };
 
 test "BytesCoder" {
-    var buffer: [1000]u8 = undefined;
-    var ctx = types.AsyncContext{ .buffer = buffer[0..], .cursor = 0 };
-    try BytesCoder.encodeInto(types.AsyncContext, &ctx, "testing");
+    var writer = TestWriter{};
+    try BytesCoder.encodeInto(TestWriter, &writer, "testing");
 
     testing.expectEqualSlices(
         u8,
         [_]u8{ 0x07, 0x74, 0x65, 0x73, 0x74, 0x69, 0x6e, 0x67 },
-        ctx.out(),
+        writer.slice(),
     );
 }
 
 fn divCeil(comptime T: type, numerator: T, denominator: T) T {
     return (numerator + denominator - 1) / denominator;
 }
+
+const TestWriter = struct {
+    buffer: [1000]u8 = undefined,
+    cursor: usize = 0,
+
+    fn write(self: *TestWriter, bytes: []const u8) std.os.WriteError!void {
+        std.mem.copy(u8, self.buffer[self.cursor..], bytes);
+        self.cursor += bytes.len;
+    }
+
+    fn slice(self: TestWriter) []u8 {
+        return self.buffer[0..self.cursor];
+    }
+};

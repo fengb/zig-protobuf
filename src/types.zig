@@ -4,35 +4,31 @@ const testing = std.testing;
 
 const ParseError = coder.ParseError;
 
-pub const AsyncContext = struct {
-    suspended: anyframe = undefined,
-    buffer: []u8 = [_]u8{},
-    cursor: usize = std.math.maxInt(usize),
+pub const BufferedWriter = struct {
+    list: std.ArrayList(u8),
 
-    fn next(self: *AsyncContext, buffer: []u8) ?[]u8 {
-        if (self.cursor > 0) {
-            self.buffer = buffer;
-            self.cursor = 0;
-            resume self.suspended;
-            return self.out();
-        }
-        return null;
+    pub fn init(allocator: *std.mem.Allocator) BufferedWriter {
+        return BufferedWriter{
+            .list = std.ArrayList(u8).init(allocator),
+        };
     }
 
-    fn out(self: AsyncContext) []u8 {
-        return self.buffer[0..self.cursor];
+    pub fn deinit(self: *BufferedWriter) void {
+        return self.deinit();
     }
 
-    fn write(self: *AsyncContext, bytes: []const u8) std.os.WriteError!void {
-        std.mem.copy(u8, self.buffer[self.cursor..], bytes);
-        self.cursor += bytes.len;
+    pub fn write(self: *BufferedWriter, bytes: []const u8) std.os.WriteError!void {
+        self.list.appendSlice(bytes) catch |err| switch (err) {
+            error.OutOfMemory => return error.NoSpaceLeft,
+        };
     }
 
-    fn append(self: *AsyncContext, items: []const u8) void {
-        std.mem.copy(u8, self.buffer, items);
-        self.cursor = items.len;
-        self.suspended = @frame();
-        suspend;
+    pub fn toSlice(self: *BufferedWriter) []u8 {
+        return self.list.toSlice();
+    }
+
+    pub fn toOwnedSlice(self: *BufferedWriter) []u8 {
+        return self.list.toOwnedSlice();
     }
 };
 
@@ -56,9 +52,9 @@ pub const FieldMeta = struct {
         };
     }
 
-    pub fn encodeInto(self: FieldMeta, ctx: *AsyncContext) void {
+    pub fn encodeInto(self: FieldMeta, comptime Writer: type, writer: *Writer) !void {
         const uint = (@intCast(u64, self.number) << 3) + @enumToInt(self.wire_type);
-        ctx.append(coder.Uint64Coder.encode(ctx.buffer, uint));
+        try coder.Uint64Coder.encodeInto(Writer, writer, uint);
     }
 
     pub fn decode(buffer: []const u8, len: *usize) ParseError!FieldMeta {
@@ -127,8 +123,8 @@ fn FromBitCast(comptime TargetPrimitive: type, comptime Coder: type, comptime in
             return Coder.encodeSize(@bitCast(Coder.primitive, self.data));
         }
 
-        pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
-            ctx.append(Coder.encode(ctx.buffer, @bitCast(Coder.primitive, self.data)));
+        pub fn encodeInto(self: Self, comptime Writer: type, writer: *Writer) !void {
+            try Coder.encodeInto(Writer, writer, @bitCast(Coder.primitive, self.data));
         }
 
         pub fn decodeFrom(self: *Self, buffer: []const u8) ParseError!usize {
@@ -152,8 +148,8 @@ fn FromVarintCast(comptime TargetPrimitive: type, comptime Coder: type, comptime
             return Coder.encodeSize(self.data);
         }
 
-        pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
-            ctx.append(Coder.encode(ctx.buffer, self.data));
+        pub fn encodeInto(self: Self, comptime Writer: type, writer: *Writer) !void {
+            try Coder.encodeInto(Writer, writer, self.data);
         }
 
         pub fn decodeFrom(self: *Self, buffer: []const u8) ParseError!usize {
@@ -167,29 +163,25 @@ fn FromVarintCast(comptime TargetPrimitive: type, comptime Coder: type, comptime
 
 var rng = std.rand.DefaultPrng.init(0);
 fn testEncodeDecode(comptime T: type, base: T) !void {
-    var buf: [1000]u8 = undefined;
+    var writer = BufferedWriter.init(std.heap.direct_allocator);
 
-    var ctx = AsyncContext{ .buffer = buf[0..], .cursor = 0 };
-
-    _ = async base.encodeInto(&ctx);
-    testing.expectEqual(base.encodeSize(), ctx.out().len);
+    try base.encodeInto(BufferedWriter, &writer);
+    testing.expectEqual(base.encodeSize(), writer.toSlice().len);
 
     var decoded: T = undefined;
-    const decoded_len = try decoded.decodeFrom(ctx.out());
+    const decoded_len = try decoded.decodeFrom(writer.toSlice());
     testing.expectEqual(base.data, decoded.data);
     testing.expectEqual(base.encodeSize(), decoded_len);
 }
 
 fn testEncodeDecodeSlices(comptime T: type, base: T) !void {
-    var buf: [1000]u8 = undefined;
+    var writer = BufferedWriter.init(std.heap.direct_allocator);
 
-    var ctx = AsyncContext{ .buffer = buf[0..], .cursor = 0 };
-
-    _ = async base.encodeInto(&ctx);
-    testing.expectEqual(base.encodeSize(), ctx.out().len);
+    try base.encodeInto(BufferedWriter, &writer);
+    testing.expectEqual(base.encodeSize(), writer.toSlice().len);
 
     var decoded: T = undefined;
-    const decoded_len = try decoded.decodeFromAlloc(ctx.out(), std.heap.direct_allocator);
+    const decoded_len = try decoded.decodeFromAlloc(writer.toSlice(), std.heap.direct_allocator);
     testing.expectEqualSlices(u8, base.data, decoded.data);
     testing.expectEqual(base.encodeSize(), decoded_len);
 }
@@ -288,8 +280,8 @@ pub fn Bytes(comptime number: u63) type {
             return coder.BytesCoder.encodeSize(self.data);
         }
 
-        pub fn encodeInto(self: Self, ctx: *AsyncContext) !void {
-            try coder.BytesCoder.encodeInto(AsyncContext, ctx, self.data);
+        pub fn encodeInto(self: Self, comptime Writer: type, writer: *Writer) !void {
+            try coder.BytesCoder.encodeInto(Writer, writer, self.data);
         }
 
         pub fn decodeFromAlloc(self: *Self, buffer: []const u8, allocator: *std.mem.Allocator) ParseError!usize {
@@ -324,8 +316,8 @@ pub fn String(comptime number: u63) type {
             return coder.BytesCoder.encodeSize(self.data);
         }
 
-        pub fn encodeInto(self: Self, ctx: *AsyncContext) !void {
-            try coder.BytesCoder.encodeInto(AsyncContext, ctx, self.data);
+        pub fn encodeInto(self: Self, comptime Writer: type, writer: *Writer) !void {
+            try coder.BytesCoder.encodeInto(Writer, writer, self.data);
         }
 
         pub fn decodeFromAlloc(self: *Self, buffer: []const u8, allocator: *std.mem.Allocator) ParseError!usize {
@@ -366,9 +358,9 @@ pub fn Bool(comptime number: u63) type {
             return 1;
         }
 
-        pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
+        pub fn encodeInto(self: Self, comptime Writer: type, writer: *Writer) !void {
             const value = if (self.data) [_]u8{1} else [_]u8{0};
-            ctx.append(value[0..]);
+            try writer.write(value[0..]);
         }
 
         pub fn decodeFrom(self: *Self, bytes: []const u8) ParseError!usize {
@@ -431,10 +423,10 @@ pub fn Repeated(comptime number: u63, comptime Tfn: var) type {
             return sum;
         }
 
-        pub fn encodeInto(self: Self, ctx: *AsyncContext) void {
+        pub fn encodeInto(self: Self, comptime Writer: type, writer: *Writer) !void {
             for (self.data) |item| {
                 const wrapper = DataType{ .data = item };
-                const result = wrapper.encodeInto(ctx);
+                wrapper.encodeInto(Writer, writer);
             }
         }
 
