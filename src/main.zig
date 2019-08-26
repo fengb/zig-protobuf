@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const testing = std.testing;
 
 const types = @import("types.zig");
+const io = @import("io.zig");
 
 pub const Double = types.Double;
 pub const Float = types.Float;
@@ -22,13 +23,16 @@ pub const String = types.String;
 
 pub const Repeated = types.Repeated;
 
-pub fn encode(comptime T: type, item: T, writer: *types.BufferedWriter) !void {
+pub fn encode(item: var, out_stream: var) !void {
+    const T = @typeOf(item);
+    const OutStream = @typeOf(out_stream.*);
+
     inline for (@typeInfo(T).Struct.fields) |field, i| {
         switch (@typeInfo(field.field_type)) {
             .Struct => {
                 if (@hasDecl(field.field_type, "field_meta")) {
-                    try field.field_type.field_meta.encodeInto(types.BufferedWriter, writer);
-                    try @field(item, field.name).encodeInto(types.BufferedWriter, writer);
+                    try field.field_type.field_meta.encodeInto(OutStream, out_stream);
+                    try @field(item, field.name).encodeInto(OutStream, out_stream);
                 } else {
                     std.debug.warn("{} - unknown struct\n", field.name);
                 }
@@ -41,12 +45,12 @@ pub fn encode(comptime T: type, item: T, writer: *types.BufferedWriter) !void {
 }
 
 pub fn marshal(comptime T: type, allocator: *std.mem.Allocator, item: T) ![]u8 {
-    var writer = types.BufferedWriter.init(allocator);
-    errdefer writer.deinit();
+    var out_stream = io.AutoAllocOutStream.init(allocator);
+    errdefer out_stream.deinit();
 
-    try encode(T, item, &writer);
+    try encode(item, &out_stream);
 
-    return writer.toOwnedSlice();
+    return out_stream.toOwnedSlice();
 }
 
 pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !T {
