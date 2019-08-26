@@ -15,18 +15,12 @@ pub const Uint64Coder = struct {
         return std.math.max(divCeil(u64, bits, 7), 1);
     }
 
-    pub fn encodeInto(comptime OutStream: type, out_stream: *OutStream, data: u64) !void {
-        var buffer = [_]u8{0};
-
-        var i = usize(0);
+    pub fn encodeInto(out_stream: var, data: u64) !void {
         var value = data;
-        while (value >= 0x80) : (i += 1) {
-            buffer[0] = u8(0x80) + @truncate(u7, value);
-            try out_stream.write(buffer[0..]);
-            value >>= 7;
+        while (value >= 0x80) : (value >>= 7) {
+            try out_stream.writeByte(u8(0x80) + @truncate(u7, value));
         }
-        buffer[0] = @truncate(u7, value);
-        try out_stream.write(buffer[0..]);
+        try out_stream.writeByte(@truncate(u7, value));
     }
 
     pub fn decode(bytes: []const u8, len: *usize) ParseError!u64 {
@@ -67,8 +61,8 @@ pub const Int64Coder = struct {
         return Uint64Coder.encodeSize(@bitCast(u64, data));
     }
 
-    pub fn encodeInto(comptime OutStream: type, out_stream: *OutStream, data: i64) !void {
-        try Uint64Coder.encodeInto(OutStream, out_stream, @bitCast(u64, data));
+    pub fn encodeInto(out_stream: var, data: i64) !void {
+        try Uint64Coder.encodeInto(out_stream, @bitCast(u64, data));
     }
 
     pub fn decode(bytes: []const u8, len: *usize) ParseError!i64 {
@@ -77,12 +71,14 @@ pub const Int64Coder = struct {
 };
 
 test "Int64Coder" {
-    var out1 = TestOutStream{};
-    var out1 = TestOutStream{};
+    var buf1: [1000]u8 = undefined;
+    var buf2: [1000]u8 = undefined;
+    var out1 = std.io.SliceOutStream.init(buf1[0..]);
+    var out2 = std.io.SliceOutStream.init(buf2[0..]);
 
-    try Uint64Coder.encodeInto(TestOutStream, &out1, std.math.maxInt(u64));
-    try Int64Coder.encodeInto(TestOutStream, &out2, -1);
-    testing.expectEqualSlices(u8, out1.slice(), out2.slice());
+    try Uint64Coder.encodeInto(&out1.stream, std.math.maxInt(u64));
+    try Int64Coder.encodeInto(&out2.stream, -1);
+    testing.expectEqualSlices(u8, out1.getWritten(), out2.getWritten());
 }
 
 pub const Sint64Coder = struct {
@@ -92,8 +88,8 @@ pub const Sint64Coder = struct {
         return Uint64Coder.encodeSize(@bitCast(u64, (data << 1) ^ (data >> 63)));
     }
 
-    pub fn encodeInto(comptime OutStream: type, out_stream: *OutStream, data: i64) !void {
-        try Uint64Coder.encodeInto(OutStream, out_stream, @bitCast(u64, (data << 1) ^ (data >> 63)));
+    pub fn encodeInto(out_stream: var, data: i64) !void {
+        try Uint64Coder.encodeInto(out_stream, @bitCast(u64, (data << 1) ^ (data >> 63)));
     }
 
     pub fn decode(bytes: []const u8, len: *usize) ParseError!i64 {
@@ -104,20 +100,26 @@ pub const Sint64Coder = struct {
 };
 
 test "Sint64Coder" {
-    var out1 = TestOutStream{};
-    var out2 = TestOutStream{};
+    var buf1: [1000]u8 = undefined;
+    var buf2: [1000]u8 = undefined;
+    var out1 = std.io.SliceOutStream.init(buf1[0..]);
+    var out2 = std.io.SliceOutStream.init(buf2[0..]);
 
-    try Uint64Coder.encodeInto(TestOutStream, &out1, 1);
-    try Sint64Coder.encodeInto(TestOutStream, &out2, -1);
-    testing.expectEqualSlices(u8, out1.slice(), out2.slice());
+    try Uint64Coder.encodeInto(&out1.stream, 1);
+    try Sint64Coder.encodeInto(&out2.stream, -1);
+    testing.expectEqualSlices(u8, out1.getWritten(), out2.getWritten());
 
-    try Uint64Coder.encodeInto(TestOutStream, &out1, 4294967294);
-    try Sint64Coder.encodeInto(TestOutStream, &out2, 2147483647);
-    testing.expectEqualSlices(u8, out1.slice(), out2.slice());
+    out1.reset();
+    out2.reset();
+    try Uint64Coder.encodeInto(&out1.stream, 4294967294);
+    try Sint64Coder.encodeInto(&out2.stream, 2147483647);
+    testing.expectEqualSlices(u8, out1.getWritten(), out2.getWritten());
 
-    try Uint64Coder.encodeInto(TestOutStream, &out1, 4294967295);
-    try Sint64Coder.encodeInto(TestOutStream, &out2, -2147483648);
-    testing.expectEqualSlices(u8, out1.slice(), out2.slice());
+    out1.reset();
+    out2.reset();
+    try Uint64Coder.encodeInto(&out1.stream, 4294967295);
+    try Sint64Coder.encodeInto(&out2.stream, -2147483648);
+    testing.expectEqualSlices(u8, out1.getWritten(), out2.getWritten());
 }
 
 pub const Fixed64Coder = struct {
@@ -127,7 +129,7 @@ pub const Fixed64Coder = struct {
         return 8;
     }
 
-    pub fn encodeInto(comptime OutStream: type, out_stream: *OutStream, data: u64) !void {
+    pub fn encodeInto(out_stream: var, data: u64) !void {
         var buffer = [_]u8{0} ** 8;
         std.mem.writeIntSliceLittle(u64, buffer[0..], data);
         try out_stream.write(buffer[0..]);
@@ -146,7 +148,7 @@ pub const Fixed32Coder = struct {
         return 4;
     }
 
-    pub fn encodeInto(comptime OutStream: type, out_stream: *OutStream, data: u32) !void {
+    pub fn encodeInto(out_stream: var, data: u32) !void {
         var buffer = [_]u8{0} ** 4;
         std.mem.writeIntSliceLittle(u32, buffer[0..], data);
         try out_stream.write(buffer[0..]);
@@ -164,8 +166,8 @@ pub const BytesCoder = struct {
         return header_size + data.len;
     }
 
-    pub fn encodeInto(comptime OutStream: type, out_stream: *OutStream, data: []const u8) !void {
-        try Uint64Coder.encodeInto(OutStream, out_stream, data.len);
+    pub fn encodeInto(out_stream: var, data: []const u8) !void {
+        try Uint64Coder.encodeInto(out_stream, data.len);
         try out_stream.write(data);
     }
 
@@ -184,30 +186,17 @@ pub const BytesCoder = struct {
 };
 
 test "BytesCoder" {
-    var out_stream = TestOutStream{};
-    try BytesCoder.encodeInto(TestOutStream, &out_stream, "testing");
+    var buf: [1000]u8 = undefined;
+    var out = std.io.SliceOutStream.init(buf[0..]);
+    try BytesCoder.encodeInto(&out.stream, "testing");
 
     testing.expectEqualSlices(
         u8,
         [_]u8{ 0x07, 0x74, 0x65, 0x73, 0x74, 0x69, 0x6e, 0x67 },
-        out_stream.slice(),
+        out.getWritten(),
     );
 }
 
 fn divCeil(comptime T: type, numerator: T, denominator: T) T {
     return (numerator + denominator - 1) / denominator;
 }
-
-const TestOutStream = struct {
-    buffer: [1000]u8 = undefined,
-    cursor: usize = 0,
-
-    fn write(self: *TestOutStream, bytes: []const u8) std.os.WriteError!void {
-        std.mem.copy(u8, self.buffer[self.cursor..], bytes);
-        self.cursor += bytes.len;
-    }
-
-    fn slice(self: TestOutStream) []u8 {
-        return self.buffer[0..self.cursor];
-    }
-};

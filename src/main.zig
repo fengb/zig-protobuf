@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const testing = std.testing;
 
 const types = @import("types.zig");
-const io = @import("io.zig");
 
 pub const Double = types.Double;
 pub const Float = types.Float;
@@ -23,16 +22,15 @@ pub const String = types.String;
 
 pub const Repeated = types.Repeated;
 
-pub fn encode(item: var, out_stream: var) !void {
+pub fn encodeInto(out_stream: var, item: var) !void {
     const T = @typeOf(item);
-    const OutStream = @typeOf(out_stream.*);
 
     inline for (@typeInfo(T).Struct.fields) |field, i| {
         switch (@typeInfo(field.field_type)) {
             .Struct => {
                 if (@hasDecl(field.field_type, "field_meta")) {
-                    try field.field_type.field_meta.encodeInto(OutStream, out_stream);
-                    try @field(item, field.name).encodeInto(OutStream, out_stream);
+                    try field.field_type.field_meta.encodeInto(out_stream);
+                    try @field(item, field.name).encodeInto(out_stream);
                 } else {
                     std.debug.warn("{} - unknown struct\n", field.name);
                 }
@@ -44,16 +42,7 @@ pub fn encode(item: var, out_stream: var) !void {
     }
 }
 
-pub fn marshal(comptime T: type, allocator: *std.mem.Allocator, item: T) ![]u8 {
-    var out_stream = io.AutoAllocOutStream.init(allocator);
-    errdefer out_stream.deinit();
-
-    try encode(item, &out_stream);
-
-    return out_stream.toOwnedSlice();
-}
-
-pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !T {
+pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []const u8) !T {
     var result = init(T);
     errdefer deinit(T, &result);
 
@@ -145,10 +134,11 @@ test "end-to-end" {
     start.boo.value = true;
     start.str.value = "weird";
 
-    const binary = try marshal(Example, std.heap.direct_allocator, start);
-    defer std.heap.direct_allocator.free(binary);
+    var buf: [1000]u8 = undefined;
+    var out = std.io.SliceOutStream.init(buf[0..]);
+    try encodeInto(&out.stream, start);
 
-    var result = try unmarshal(Example, std.heap.direct_allocator, binary);
+    var result = try unmarshal(Example, std.heap.direct_allocator, out.getWritten());
     testing.expectEqual(start.sint.value, result.sint.value);
     testing.expectEqual(start.boo.value, result.boo.value);
     testing.expectEqualSlices(u8, start.str.value, result.str.value);
