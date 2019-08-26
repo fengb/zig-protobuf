@@ -88,22 +88,22 @@ fn FromBitCast(comptime TargetPrimitive: type, comptime Coder: type, comptime in
     return struct {
         const Self = @This();
 
-        data: TargetPrimitive = 0,
+        value: TargetPrimitive = 0,
 
         pub const field_meta = info;
 
         pub fn encodeSize(self: Self) usize {
-            return Coder.encodeSize(@bitCast(Coder.primitive, self.data));
+            return Coder.encodeSize(@bitCast(Coder.primitive, self.value));
         }
 
         pub fn encodeInto(self: Self, comptime OutStream: type, out_stream: *OutStream) !void {
-            try Coder.encodeInto(OutStream, out_stream, @bitCast(Coder.primitive, self.data));
+            try Coder.encodeInto(OutStream, out_stream, @bitCast(Coder.primitive, self.value));
         }
 
         pub fn decodeFrom(self: *Self, buffer: []const u8) ParseError!usize {
             var len: usize = undefined;
             const raw = try Coder.decode(buffer, &len);
-            self.data = @bitCast(TargetPrimitive, raw);
+            self.value = @bitCast(TargetPrimitive, raw);
             return len;
         }
     };
@@ -113,22 +113,22 @@ fn FromVarintCast(comptime TargetPrimitive: type, comptime Coder: type, comptime
     return struct {
         const Self = @This();
 
-        data: TargetPrimitive = 0,
+        value: TargetPrimitive = 0,
 
         pub const field_meta = info;
 
         pub fn encodeSize(self: Self) usize {
-            return Coder.encodeSize(self.data);
+            return Coder.encodeSize(self.value);
         }
 
         pub fn encodeInto(self: Self, comptime OutStream: type, out_stream: *OutStream) !void {
-            try Coder.encodeInto(OutStream, out_stream, self.data);
+            try Coder.encodeInto(OutStream, out_stream, self.value);
         }
 
         pub fn decodeFrom(self: *Self, buffer: []const u8) ParseError!usize {
             var len: usize = undefined;
             const raw = try Coder.decode(buffer, &len);
-            self.data = @intCast(TargetPrimitive, raw);
+            self.value = @intCast(TargetPrimitive, raw);
             return len;
         }
     };
@@ -143,7 +143,7 @@ fn testEncodeDecode(comptime T: type, base: T) !void {
 
     var decoded: T = undefined;
     const decoded_len = try decoded.decodeFrom(out_stream.toSlice());
-    testing.expectEqual(base.data, decoded.data);
+    testing.expectEqual(base.value, decoded.value);
     testing.expectEqual(base.encodeSize(), decoded_len);
 }
 
@@ -155,17 +155,17 @@ fn testEncodeDecodeSlices(comptime T: type, base: T) !void {
 
     var decoded: T = undefined;
     const decoded_len = try decoded.decodeFromAlloc(out_stream.toSlice(), std.heap.direct_allocator);
-    testing.expectEqualSlices(u8, base.data, decoded.data);
+    testing.expectEqualSlices(u8, base.value, decoded.value);
     testing.expectEqual(base.encodeSize(), decoded_len);
 }
 
 test "Var int" {
     inline for ([_]type{ Uint64(1), Int64(1), Sint64(1), Uint32(1), Int32(1), Sint32(1) }) |T| {
-        const data_field = std.meta.fieldInfo(T, "data");
+        const value_field = std.meta.fieldInfo(T, "value");
 
         var i = usize(0);
         while (i < 100) : (i += 1) {
-            const base = T{ .data = rng.random.int(data_field.field_type) };
+            const base = T{ .value = rng.random.int(value_field.field_type) };
             try testEncodeDecode(T, base);
         }
     }
@@ -210,21 +210,21 @@ pub fn Float(comptime number: u63) type {
 
 test "Fixed numbers" {
     inline for ([_]type{ Fixed64(1), Fixed32(1), Sfixed64(1), Sfixed32(1) }) |T| {
-        const data_field = std.meta.fieldInfo(T, "data");
+        const value_field = std.meta.fieldInfo(T, "value");
 
         var i = usize(0);
         while (i < 100) : (i += 1) {
-            const base = T{ .data = rng.random.int(data_field.field_type) };
+            const base = T{ .value = rng.random.int(value_field.field_type) };
             try testEncodeDecode(T, base);
         }
     }
 
     inline for ([_]type{ Double(1), Float(1) }) |T| {
-        const data_field = std.meta.fieldInfo(T, "data");
+        const value_field = std.meta.fieldInfo(T, "value");
 
         var i = usize(0);
         while (i < 100) : (i += 1) {
-            const base = T{ .data = rng.random.float(data_field.field_type) };
+            const base = T{ .value = rng.random.float(value_field.field_type) };
             try testEncodeDecode(T, base);
         }
     }
@@ -234,7 +234,7 @@ pub fn Bytes(comptime number: u63) type {
     return struct {
         const Self = @This();
 
-        data: []u8 = [_]u8{},
+        value: []u8 = [_]u8{},
         allocator: ?*std.mem.Allocator = null,
 
         pub const field_meta = FieldMeta{
@@ -244,22 +244,22 @@ pub fn Bytes(comptime number: u63) type {
 
         pub fn deinit(self: *Self) void {
             if (self.allocator) |alloc| {
-                alloc.free(self.data);
+                alloc.free(self.value);
                 self.* = Self{};
             }
         }
 
         pub fn encodeSize(self: Self) usize {
-            return coder.BytesCoder.encodeSize(self.data);
+            return coder.BytesCoder.encodeSize(self.value);
         }
 
         pub fn encodeInto(self: Self, comptime OutStream: type, out_stream: *OutStream) !void {
-            try coder.BytesCoder.encodeInto(OutStream, out_stream, self.data);
+            try coder.BytesCoder.encodeInto(OutStream, out_stream, self.value);
         }
 
         pub fn decodeFromAlloc(self: *Self, buffer: []const u8, allocator: *std.mem.Allocator) ParseError!usize {
             var len: usize = undefined;
-            self.data = try coder.BytesCoder.decode(buffer, &len, allocator);
+            self.value = try coder.BytesCoder.decode(buffer, &len, allocator);
             self.allocator = allocator;
             return len;
         }
@@ -270,7 +270,7 @@ pub fn String(comptime number: u63) type {
     return struct {
         const Self = @This();
 
-        data: []const u8 = "",
+        value: []const u8 = "",
         allocator: ?*std.mem.Allocator = null,
 
         pub const field_meta = FieldMeta{
@@ -280,23 +280,23 @@ pub fn String(comptime number: u63) type {
 
         pub fn deinit(self: *Self) void {
             if (self.allocator) |alloc| {
-                alloc.free(self.data);
+                alloc.free(self.value);
                 self.* = Self{};
             }
         }
 
         pub fn encodeSize(self: Self) usize {
-            return coder.BytesCoder.encodeSize(self.data);
+            return coder.BytesCoder.encodeSize(self.value);
         }
 
         pub fn encodeInto(self: Self, comptime OutStream: type, out_stream: *OutStream) !void {
-            try coder.BytesCoder.encodeInto(OutStream, out_stream, self.data);
+            try coder.BytesCoder.encodeInto(OutStream, out_stream, self.value);
         }
 
         pub fn decodeFromAlloc(self: *Self, buffer: []const u8, allocator: *std.mem.Allocator) ParseError!usize {
             // TODO: validate unicode
             var len: usize = undefined;
-            self.data = try coder.BytesCoder.decode(buffer, &len, allocator);
+            self.value = try coder.BytesCoder.decode(buffer, &len, allocator);
             self.allocator = allocator;
             return len;
         }
@@ -310,7 +310,7 @@ test "Bytes/String" {
             var base_buf: [500]u8 = undefined;
             rng.random.bytes(base_buf[0..]);
 
-            const base = T{ .data = base_buf[0..] };
+            const base = T{ .value = base_buf[0..] };
             try testEncodeDecodeSlices(T, base);
         }
     }
@@ -320,7 +320,7 @@ pub fn Bool(comptime number: u63) type {
     return struct {
         const Self = @This();
 
-        data: bool = false,
+        value: bool = false,
 
         pub const field_meta = FieldMeta{
             .wire_type = .Varint,
@@ -332,7 +332,7 @@ pub fn Bool(comptime number: u63) type {
         }
 
         pub fn encodeInto(self: Self, comptime OutStream: type, out_stream: *OutStream) !void {
-            const value = if (self.data) [_]u8{1} else [_]u8{0};
+            const value = if (self.value) [_]u8{1} else [_]u8{0};
             try out_stream.write(value[0..]);
         }
 
@@ -343,7 +343,7 @@ pub fn Bool(comptime number: u63) type {
             if (raw > 1) {
                 return error.Overflow;
             }
-            self.data = raw != 0;
+            self.value = raw != 0;
             return len;
         }
     };
@@ -352,7 +352,7 @@ pub fn Bool(comptime number: u63) type {
 test "Bool" {
     @"fuzz": {
         inline for ([_]bool{ false, true }) |b| {
-            const base = Bool(1){ .data = b };
+            const base = Bool(1){ .value = b };
             try testEncodeDecode(Bool(1), base);
         }
     }
@@ -361,44 +361,44 @@ test "Bool" {
 pub fn Repeated(comptime number: u63, comptime Tfn: var) type {
     const T = Tfn(number);
 
-    std.debug.assert(@hasField(T, "data"));
+    std.debug.assert(@hasField(T, "value"));
     std.debug.assert(@hasDecl(T, "encodeSize"));
     std.debug.assert(@hasDecl(T, "encodeInto"));
     std.debug.assert(@hasDecl(T, "decodeFrom"));
 
-    const DataType = std.meta.fieldInfo(T, "data").field_type;
+    const ValueType = std.meta.fieldInfo(T, "value").field_type;
 
     return struct {
         const Self = @This();
-        const List = std.ArrayList(DataType);
+        const List = std.ArrayList(ValueType);
 
-        data: []DataType = [_]DataType{},
+        value: []ValueType = [_]ValueType{},
         allocator: ?*std.mem.Allocator = null,
         _decode_builder: ?List = null,
 
         pub fn deinit(self: *Self) void {
             if (self._decode_builder) |*decode_builder| {
-                std.debug.assert(self.data.len == 0);
+                std.debug.assert(self.value.len == 0);
                 decode_builder.deinit();
                 self.* = Self{};
             } else if (self.allocator) |alloc| {
-                alloc.free(self.data);
+                alloc.free(self.value);
                 self.* = Self{};
             }
         }
 
         pub fn encodeSize(self: Self) usize {
             var sum = usize(0);
-            for (self.data) |item| {
-                const wrapper = DataType{ .data = item };
+            for (self.value) |item| {
+                const wrapper = ValueType{ .value = item };
                 sum += wrapper.encodeSize();
             }
             return sum;
         }
 
         pub fn encodeInto(self: Self, comptime OutStream: type, out_stream: *OutStream) !void {
-            for (self.data) |item| {
-                const wrapper = DataType{ .data = item };
+            for (self.value) |item| {
+                const wrapper = ValueType{ .value = item };
                 wrapper.encodeInto(OutStream, out_stream);
             }
         }
@@ -410,7 +410,7 @@ pub fn Repeated(comptime number: u63, comptime Tfn: var) type {
             }
             var base: T = undefined;
             const len = try base.decodeFrom(raw);
-            try self._decode_builder.?.append(base.data);
+            try self._decode_builder.?.append(base.value);
             return len;
         }
 
@@ -419,11 +419,11 @@ pub fn Repeated(comptime number: u63, comptime Tfn: var) type {
             const header = try Uint64.decode(raw, &header_len);
 
             var items_len = usize(0);
-            while (items_len < header.data) {
+            while (items_len < header.value) {
                 items_len += try self.decodeFromAlloc(raw[header_len + items_len ..], &len, allocator);
             }
 
-            if (items_len > header.data) {
+            if (items_len > header.value) {
                 // Header listed length != items actual length
                 return error.Overflow;
             }
@@ -433,9 +433,9 @@ pub fn Repeated(comptime number: u63, comptime Tfn: var) type {
 
         pub fn decodeComplete(self: *Self) void {
             if (self._decode_builder) |*decode_builder| {
-                std.debug.assert(self.data.len == 0);
+                std.debug.assert(self.value.len == 0);
                 self.allocator = decode_builder.allocator;
-                self.data = decode_builder.toOwnedSlice();
+                self.value = decode_builder.toOwnedSlice();
                 self._decode_builder = null;
             }
         }
@@ -450,5 +450,5 @@ test "Repeated" {
     _ = try repeated_field.decodeFromAlloc(twelve[0..], std.heap.direct_allocator);
     _ = try repeated_field.decodeFromAlloc(hundred[0..], std.heap.direct_allocator);
     repeated_field.decodeComplete();
-    testing.expectEqualSlices(u32, [_]u32{ 12, 100 }, repeated_field.data);
+    testing.expectEqualSlices(u32, [_]u32{ 12, 100 }, repeated_field.value);
 }

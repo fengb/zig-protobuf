@@ -136,25 +136,25 @@ test "end-to-end" {
     };
 
     var start = init(Example);
-    testing.expectEqual(i64(0), start.sint.data);
-    testing.expectEqual(false, start.boo.data);
-    testing.expectEqual(start.str.data, "");
+    testing.expectEqual(i64(0), start.sint.value);
+    testing.expectEqual(false, start.boo.value);
+    testing.expectEqual(start.str.value, "");
     testing.expectEqual(start.str.allocator, null);
 
-    start.sint.data = -17;
-    start.boo.data = true;
-    start.str.data = "weird";
+    start.sint.value = -17;
+    start.boo.value = true;
+    start.str.value = "weird";
 
     const binary = try marshal(Example, std.heap.direct_allocator, start);
     defer std.heap.direct_allocator.free(binary);
 
     var result = try unmarshal(Example, std.heap.direct_allocator, binary);
-    testing.expectEqual(start.sint.data, result.sint.data);
-    testing.expectEqual(start.boo.data, result.boo.data);
-    testing.expectEqualSlices(u8, start.str.data, result.str.data);
+    testing.expectEqual(start.sint.value, result.sint.value);
+    testing.expectEqual(start.boo.value, result.boo.value);
+    testing.expectEqualSlices(u8, start.str.value, result.str.value);
     testing.expectEqual(std.heap.direct_allocator, result.str.allocator.?);
 
     deinit(Example, &result);
-    testing.expectEqual(result.str.data, "");
+    testing.expectEqual(result.str.value, "");
     testing.expectEqual(result.str.allocator, null);
 }
