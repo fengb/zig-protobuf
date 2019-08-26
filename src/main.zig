@@ -22,9 +22,7 @@ pub const String = types.String;
 
 pub const Repeated = types.Repeated;
 
-pub fn encodeInto(out_stream: var, item: var) !void {
-    const T = @typeOf(item);
-
+pub fn encodeInto(comptime T: type, item: T, out_stream: var) !void {
     inline for (@typeInfo(T).Struct.fields) |field, i| {
         switch (@typeInfo(field.field_type)) {
             .Struct => {
@@ -42,24 +40,19 @@ pub fn encodeInto(out_stream: var, item: var) !void {
     }
 }
 
-pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []const u8) !T {
+pub fn decodeFrom(comptime T: type, allocator: *std.mem.Allocator, in_stream: var) !T {
     var result = init(T);
     errdefer deinit(T, &result);
 
-    var cursor = usize(0);
-    while (cursor < bytes.len) {
-        var len: usize = undefined;
-        const info = try types.FieldMeta.decode(bytes[cursor..], &len);
-        cursor += len;
-
+    while (types.FieldMeta.decode(in_stream)) |meta| {
         inline for (@typeInfo(T).Struct.fields) |field, i| {
             switch (@typeInfo(field.field_type)) {
                 .Struct => {
-                    if (info.number == field.field_type.field_meta.number) {
+                    if (meta.number == field.field_type.field_meta.number) {
                         if (@hasDecl(field.field_type, "decodeFromAlloc")) {
-                            cursor += try @field(result, field.name).decodeFromAlloc(bytes[cursor..], allocator);
+                            try @field(result, field.name).decodeFromAlloc(in_stream, allocator);
                         } else {
-                            cursor += try @field(result, field.name).decodeFrom(bytes[cursor..]);
+                            try @field(result, field.name).decodeFrom(in_stream);
                         }
                         break;
                     }
@@ -69,6 +62,9 @@ pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []const
                 },
             }
         }
+    } else |err| switch (err) {
+        error.EndOfStream => {},
+        else => return err,
     }
 
     inline for (@typeInfo(T).Struct.fields) |field, i| {
@@ -136,9 +132,10 @@ test "end-to-end" {
 
     var buf: [1000]u8 = undefined;
     var out = std.io.SliceOutStream.init(buf[0..]);
-    try encodeInto(&out.stream, start);
+    try encodeInto(Example, start, &out.stream);
 
-    var result = try unmarshal(Example, std.heap.direct_allocator, out.getWritten());
+    var mem_in = std.io.SliceInStream.init(out.getWritten());
+    var result = try decodeFrom(Example, std.heap.direct_allocator, &mem_in.stream);
     testing.expectEqual(start.sint.value, result.sint.value);
     testing.expectEqual(start.boo.value, result.boo.value);
     testing.expectEqualSlices(u8, start.str.value, result.str.value);

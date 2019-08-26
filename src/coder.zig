@@ -1,12 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
 
-pub const ParseError = error{
-    Overflow,
-    EndOfStream,
-    OutOfMemory,
-};
-
 pub const Uint64Coder = struct {
     pub const primitive = u64;
 
@@ -23,34 +17,33 @@ pub const Uint64Coder = struct {
         try out_stream.writeByte(@truncate(u7, value));
     }
 
-    pub fn decode(bytes: []const u8, len: *usize) ParseError!u64 {
+    pub fn decodeFrom(in_stream: var) !u64 {
         var value = u64(0);
 
-        for (bytes) |byte, i| {
-            if (i >= 10) {
-                return error.Overflow;
-            }
+        var i = usize(0);
+        while (i < 10) : (i += 1) {
+            const byte = try in_stream.readByte();
             value += @intCast(u64, 0x7F & byte) << (7 * @intCast(u6, i));
             if (byte & 0x80 == 0) {
-                len.* = i + 1;
                 return value;
             }
         }
-        // TODO: stream in bytes
-        return error.EndOfStream;
+
+        return error.Overflow;
     }
 };
 
 test "Uint64Coder" {
-    var len: usize = 0;
-
-    var uint = try Uint64Coder.decode([_]u8{1}, &len);
+    var mem_stream = std.io.SliceInStream.init([_]u8{1});
+    var uint = try Uint64Coder.decodeFrom(&mem_stream.stream);
     testing.expectEqual(u64(1), uint);
 
-    uint = try Uint64Coder.decode([_]u8{ 0b10101100, 0b00000010 }, &len);
+    mem_stream = std.io.SliceInStream.init([_]u8{ 0b10101100, 0b00000010 });
+    uint = try Uint64Coder.decodeFrom(&mem_stream.stream);
     testing.expectEqual(u64(300), uint);
 
-    uint = try Uint64Coder.decode([_]u8{ 0b10010110, 0b00000001 }, &len);
+    mem_stream = std.io.SliceInStream.init([_]u8{ 0b10010110, 0b00000001 });
+    uint = try Uint64Coder.decodeFrom(&mem_stream.stream);
     testing.expectEqual(u64(150), uint);
 }
 
@@ -65,8 +58,8 @@ pub const Int64Coder = struct {
         try Uint64Coder.encodeInto(out_stream, @bitCast(u64, data));
     }
 
-    pub fn decode(bytes: []const u8, len: *usize) ParseError!i64 {
-        return @bitCast(i64, try Uint64Coder.decode(bytes, len));
+    pub fn decodeFrom(in_stream: var) !i64 {
+        return @bitCast(i64, try Uint64Coder.decodeFrom(in_stream));
     }
 };
 
@@ -92,8 +85,8 @@ pub const Sint64Coder = struct {
         try Uint64Coder.encodeInto(out_stream, @bitCast(u64, (data << 1) ^ (data >> 63)));
     }
 
-    pub fn decode(bytes: []const u8, len: *usize) ParseError!i64 {
-        const source = try Uint64Coder.decode(bytes, len);
+    pub fn decodeFrom(in_stream: var) !i64 {
+        const source = try Uint64Coder.decodeFrom(in_stream);
         const raw = @bitCast(i64, source >> 1);
         return if (@mod(source, 2) == 0) raw else -(raw + 1);
     }
@@ -135,9 +128,8 @@ pub const Fixed64Coder = struct {
         try out_stream.write(buffer[0..]);
     }
 
-    pub fn decode(bytes: []const u8, len: *usize) ParseError!u64 {
-        len.* = 8;
-        return std.mem.readIntSliceLittle(u64, bytes);
+    pub fn decodeFrom(in_stream: var) !u64 {
+        return in_stream.readIntLittle(u64);
     }
 };
 
@@ -154,9 +146,8 @@ pub const Fixed32Coder = struct {
         try out_stream.write(buffer[0..]);
     }
 
-    pub fn decode(bytes: []const u8, len: *usize) ParseError!u32 {
-        len.* = 4;
-        return std.mem.readIntSliceLittle(u32, bytes);
+    pub fn decodeFrom(in_stream: var) !u32 {
+        return try in_stream.readIntLittle(u32);
     }
 };
 
@@ -171,17 +162,14 @@ pub const BytesCoder = struct {
         try out_stream.write(data);
     }
 
-    pub fn decode(buffer: []const u8, len: *usize, allocator: *std.mem.Allocator) ![]u8 {
-        var header_len: usize = undefined;
-        const header = try Uint64Coder.decode(buffer, &header_len);
+    pub fn decodeFrom(in_stream: var, allocator: *std.mem.Allocator) ![]u8 {
+        const size = try Uint64Coder.decodeFrom(in_stream);
 
-        var data = try allocator.alloc(u8, header);
-        errdefer allocator.free(data);
+        var result = try allocator.alloc(u8, size);
+        errdefer allocator.free(result);
 
-        std.mem.copy(u8, data, buffer[header_len .. header_len + data.len]);
-        len.* = header_len + data.len;
-
-        return data;
+        try in_stream.readNoEof(result);
+        return result;
     }
 };
 
