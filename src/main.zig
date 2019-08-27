@@ -22,91 +22,37 @@ pub const String = types.String;
 
 pub const Repeated = types.Repeated;
 
-pub fn StreamingMarshal(comptime T: type) type {
-    return struct {
-        const Self = @This();
-
-        // TODO: this is so terrible.
-        // Temporarily sticking this here because I can't make spin a method due to circular references
-        var out: ?[]const u8 = [_]u8{};
-
-        item: T,
-        frame: @Frame(spin),
-
-        pub fn init(item: T) Self {
-            return Self{
-                .item = item,
-                .frame = async spin(item),
-            };
-        }
-
-        fn spin(item: T) void {
-            var buffer: [1000]u8 = undefined;
-            var bufslice = buffer[0..];
-
-            inline for (@typeInfo(T).Struct.fields) |field, i| {
-                switch (@typeInfo(field.field_type)) {
-                    .Struct => {
-                        if (@hasDecl(field.field_type, "field_meta")) {
-                            suspend;
-                            Self.out = field.field_type.field_meta.encodeInto(bufslice);
-
-                            suspend;
-                            Self.out = @field(item, field.name).encodeInto(bufslice);
-                        } else {
-                            std.debug.warn("{} - unknown struct\n", field.name);
-                        }
-                    },
-                    else => {
-                        std.debug.warn("{} - not a struct\n", field.name);
-                    },
+pub fn encodeInto(comptime T: type, item: T, out_stream: var) !void {
+    inline for (@typeInfo(T).Struct.fields) |field, i| {
+        switch (@typeInfo(field.field_type)) {
+            .Struct => {
+                if (@hasDecl(field.field_type, "field_meta")) {
+                    try field.field_type.field_meta.encodeInto(out_stream);
+                    try @field(item, field.name).encodeInto(out_stream);
+                } else {
+                    std.debug.warn("{} - unknown struct\n", field.name);
                 }
-            }
-            suspend;
-            Self.out = null;
+            },
+            else => {
+                std.debug.warn("{} - not a struct\n", field.name);
+            },
         }
-
-        pub fn next(self: *Self) ?[]const u8 {
-            if (out != null) {
-                resume self.frame;
-                return out;
-            }
-            return null;
-        }
-    };
-}
-
-pub fn marshal(comptime T: type, allocator: *std.mem.Allocator, item: T) ![]u8 {
-    var buffer = std.ArrayList(u8).init(allocator);
-    errdefer buffer.deinit();
-
-    var stream = StreamingMarshal(T).init(item);
-
-    while (stream.next()) |data| {
-        try buffer.appendSlice(data);
     }
-
-    return buffer.toOwnedSlice();
 }
 
-pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !T {
+pub fn decodeFrom(comptime T: type, allocator: *std.mem.Allocator, in_stream: var) !T {
     var result = init(T);
-    errdefer deinit(T, result);
+    errdefer deinit(T, &result);
 
-    var cursor = usize(0);
-    while (cursor < bytes.len) {
-        var len: usize = undefined;
-        const info = try types.FieldMeta.decode(bytes[cursor..], &len);
-        cursor += len;
-
+    while (types.FieldMeta.decode(in_stream)) |meta| {
         inline for (@typeInfo(T).Struct.fields) |field, i| {
             switch (@typeInfo(field.field_type)) {
                 .Struct => {
-                    if (info.number == field.field_type.field_meta.number) {
+                    if (meta.number == field.field_type.field_meta.number) {
                         if (@hasDecl(field.field_type, "decodeFromAlloc")) {
-                            cursor += try @field(result, field.name).decodeFromAlloc(bytes[cursor..], allocator);
+                            try @field(result, field.name).decodeFromAlloc(in_stream, allocator);
                         } else {
-                            cursor += try @field(result, field.name).decodeFrom(bytes[cursor..]);
+                            try @field(result, field.name).decodeFrom(in_stream);
                         }
                         break;
                     }
@@ -116,6 +62,9 @@ pub fn unmarshal(comptime T: type, allocator: *std.mem.Allocator, bytes: []u8) !
                 },
             }
         }
+    } else |err| switch (err) {
+        error.EndOfStream => {},
+        else => return err,
     }
 
     inline for (@typeInfo(T).Struct.fields) |field, i| {
@@ -172,25 +121,27 @@ test "end-to-end" {
     };
 
     var start = init(Example);
-    testing.expectEqual(i64(0), start.sint.data);
-    testing.expectEqual(false, start.boo.data);
-    testing.expectEqual(start.str.data, "");
+    testing.expectEqual(i64(0), start.sint.value);
+    testing.expectEqual(false, start.boo.value);
+    testing.expectEqual(start.str.value, "");
     testing.expectEqual(start.str.allocator, null);
 
-    start.sint.data = -17;
-    start.boo.data = true;
-    start.str.data = "weird";
+    start.sint.value = -17;
+    start.boo.value = true;
+    start.str.value = "weird";
 
-    const binary = try marshal(Example, std.heap.direct_allocator, start);
-    defer std.heap.direct_allocator.free(binary);
+    var buf: [1000]u8 = undefined;
+    var out = std.io.SliceOutStream.init(buf[0..]);
+    try encodeInto(Example, start, &out.stream);
 
-    var result = try unmarshal(Example, std.heap.direct_allocator, binary);
-    testing.expectEqual(start.sint.data, result.sint.data);
-    testing.expectEqual(start.boo.data, result.boo.data);
-    testing.expectEqualSlices(u8, start.str.data, result.str.data);
+    var mem_in = std.io.SliceInStream.init(out.getWritten());
+    var result = try decodeFrom(Example, std.heap.direct_allocator, &mem_in.stream);
+    testing.expectEqual(start.sint.value, result.sint.value);
+    testing.expectEqual(start.boo.value, result.boo.value);
+    testing.expectEqualSlices(u8, start.str.value, result.str.value);
     testing.expectEqual(std.heap.direct_allocator, result.str.allocator.?);
 
     deinit(Example, &result);
-    testing.expectEqual(result.str.data, "");
+    testing.expectEqual(result.str.value, "");
     testing.expectEqual(result.str.allocator, null);
 }
